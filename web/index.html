@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>B2B Local Data</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
+<body>
+<header><a href="/" class="brand"><span class="mark">b.</span> B2B Local Data</a><span class="local">Local workspace</span></header>
+<main>
+  <div class="intro"><p class="eyebrow">YOUR OPPORTUNITIES, IN FOCUS</p><h1>Ask a question.<br>Get a table.</h1><p class="sub">Explore your Salesforce extract, from the whole opportunity to each product.</p></div>
+  <section class="ask-card" aria-label="Ask your data">
+    <div id="status" class="status">Connecting to your workspace…</div>
+    <form id="ask-form">
+      <label for="question">What would you like to see?</label>
+      <textarea id="question" maxlength="4000" rows="3" placeholder="Show Alex’s opportunities closing in October, with products combined." required></textarea>
+      <div class="actions"><label class="layout">Table layout <select id="view"><option value="auto">Ask Qwen to choose</option><option value="summary">Summary · per opportunity</option><option value="detail">Detail · per opportunity + SKU</option></select></label><button id="ask" type="submit">Ask Qwen <span aria-hidden="true">↗</span></button></div>
+    </form>
+    <div id="samples" hidden><span>Try the fictional dataset</span><button class="quiet sample" data-view="summary">Summary table</button><button class="quiet sample" data-view="detail">Detailed table</button></div>
+  </section>
+  <div class="conversation-top"><span>Conversation</span><button id="reset" class="quiet">New question</button></div>
+  <div id="conversation" aria-live="polite"><p class="empty">Qwen will ask a follow-up when your question needs more detail.</p></div>
+  <section id="result" hidden>
+    <div class="result-header"><div><h2 id="result-title">Your table</h2><p id="result-meta"></p></div><button id="export" class="quiet">Download CSV ↓</button></div>
+    <p id="scope" class="scope"></p>
+    <div class="table-wrap"><table id="table"></table></div>
+    <details><summary>Applied filters</summary><pre id="filters"></pre></details>
+  </section>
+  <footer>Questions run through your configured local model. Tables are calculated from the data and your business rules.</footer>
+</main>
+</body></html>

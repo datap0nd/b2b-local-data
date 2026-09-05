@@ -1,0 +1,18 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Test rules and local API
+        run: python run.py --self-test
+      - name: Download locked local dependencies
+        run: python scripts/vendor_dependencies.py
+      - name: Verify vendored driver imports
+        run: python -c "import sys; sys.path.insert(0, 'vendor'); import pg8000.dbapi, scramp, asn1crypto, dateutil, six"

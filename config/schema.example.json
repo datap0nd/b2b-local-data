@@ -1,0 +1,29 @@
+{
+  "description": "FICTIONAL example. Replace with your Salesforce extract schema.",
+  "table": ["public", "salesforce_extract"],
+  "opportunity_key": "opportunity",
+  "product_key": "sku",
+  "columns": {
+    "opportunity": {"source": "opportunity_number", "type": "text", "level": "opportunity", "description": "Opportunity identifier; never sum it"},
+    "account": {"source": "account_name", "type": "text", "level": "opportunity"},
+    "owner": {"source": "owner_name", "type": "text", "level": "opportunity"},
+    "stage": {"source": "stage", "type": "text", "level": "opportunity"},
+    "close_date": {"source": "close_date", "type": "date", "level": "opportunity"},
+    "currency": {"source": "currency", "type": "text", "level": "opportunity"},
+    "sku": {"source": "sku", "type": "text", "level": "product"},
+    "product": {"source": "product_name", "type": "text", "level": "product"},
+    "quantity": {"source": "quantity", "type": "number", "level": "product"},
+    "line_value": {"source": "line_value", "type": "number", "level": "product", "description": "Additive value of this product line"},
+    "opportunity_value": {"source": "opportunity_value", "type": "number", "level": "opportunity", "description": "Repeated opportunity amount; keep once per opportunity"}
+  },
+  "views": {
+    "summary": {
+      "keys": ["opportunity"],
+      "columns": {"opportunity": "unique", "account": "unique", "owner": "unique", "stage": "unique", "close_date": "unique", "currency": "unique", "sku": "join", "product": "join", "quantity": "sum", "line_value": "sum", "opportunity_value": "unique"}
+    },
+    "detail": {
+      "keys": ["opportunity", "sku"],
+      "columns": {"opportunity": "unique", "account": "unique", "owner": "unique", "stage": "unique", "close_date": "unique", "currency": "unique", "sku": "unique", "product": "join", "quantity": "sum", "line_value": "sum", "opportunity_value": "unique"}
+    }
+  }
+}
