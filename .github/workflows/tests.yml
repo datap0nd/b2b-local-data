@@ -1,18 +1,28 @@
 name: Tests
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
   core:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Test rules and local API
-        run: python run.py --self-test
       - name: Download locked local dependencies
         run: python scripts/vendor_dependencies.py
-      - name: Verify vendored driver imports
-        run: python -c "import sys; sys.path.insert(0, 'vendor'); import pg8000.dbapi, scramp, asn1crypto, dateutil, six"
+      - name: Start disposable runner PostgreSQL
+        shell: pwsh
+        run: |
+          Set-Service postgresql-x64-14 -StartupType Manual
+          Start-Service postgresql-x64-14
+      - name: Test rules, API, and live PostgreSQL parity
+        env:
+          B2B_TEST_PGURL: 127.0.0.1:5432/postgres
+          B2B_TEST_PGUSER: postgres
+          B2B_TEST_PGPASSWORD: root # Default password of the disposable hosted runner, not application credentials.
+        run: python run.py --self-test
+      - name: Portable installation smoke test
+        shell: pwsh
+        run: .\setup.ps1 -LocalSource $pwd.Path -InstallDir (Join-Path $env:RUNNER_TEMP 'b2b-install') -DownloadCache (Join-Path $pwd.Path '.downloads')

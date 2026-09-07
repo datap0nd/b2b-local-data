@@ -20,3 +20,6 @@ __pycache__/
 *.whl
 current.json
 previous.json
+data/
+.release.json
+.test-postgres/

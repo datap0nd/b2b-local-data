@@ -1,7 +1,7 @@
 # B2B Local Data: one setup/update entry point, portable Python, no pip or admin.
 [CmdletBinding()]
 param(
-    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'B2BLocalData'),
+    [string]$InstallDir = $(if ($env:B2B_INSTALL_ROOT) { $env:B2B_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA 'B2BLocalData' }),
     [string]$Repository = 'datap0nd/b2b-local-data',
     [string]$Ref = 'main',
     [string]$LocalSource,
@@ -71,7 +71,7 @@ try {
     $release = Join-Path $InstallDir "releases\$commit-$installId"
     New-Item -ItemType Directory -Force -Path $release | Out-Null
     # Copy only shipped source. .env, local schema/rules, incoming scripts and data stay outside releases.
-    foreach ($item in @('app','web','config','scripts','tests','run.py','VERSION','README.md','.env.example','dependencies.lock.json','runtime.lock.json','setup.ps1','start.ps1')) {
+    foreach ($item in @('web','config','scripts','tests','migrations','tools','app_config.py','data_layer.py','history_store.py','query_models.py','query_engine.py','ui_app.py','updater.py','run_app.py','run.py','VERSION','README.md','.env.example','release_manifest.json','dependencies.lock.json','runtime.lock.json','setup.ps1','start.ps1','update_app.ps1')) {
         Copy-Item -LiteralPath (Join-Path $source $item) -Destination $release -Recurse
     }
     $runtime = Get-Content -LiteralPath (Join-Path $release 'runtime.lock.json') -Raw | ConvertFrom-Json
@@ -98,12 +98,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Dependency download or verification failed.' }
     & $python (Join-Path $release 'run.py') --self-test
     if ($LASTEXITCODE -ne 0) { throw 'Release checks failed; the previous release is still selected.' }
-    foreach ($pair in @(@('.env.example','.env'), @('config\schema.example.json','schema.json'), @('config\business_rules.example.md','business_rules.md'))) {
+    foreach ($pair in @(@('.env.example','.env'), @('config\business_rules.example.md','business_rules.md'))) {
         $target = Join-Path $InstallDir $pair[1]
         if (-not (Test-Path -LiteralPath $target)) { Copy-Item -LiteralPath (Join-Path $release $pair[0]) -Destination $target }
     }
     & $python (Join-Path $release 'run.py') --home $InstallDir --check
     if ($LASTEXITCODE -ne 0) { throw 'Local configuration check failed; the previous release is still selected.' }
+    [IO.File]::WriteAllText((Join-Path $release '.release.json'), (@{commit=$commit} | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
     $pointer = @{ release=$release; python=$python; commit=$commit; installed_at=[DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
     $pending = Join-Path $InstallDir "current-$installId.json"
     [IO.File]::WriteAllText($pending, $pointer, (New-Object System.Text.UTF8Encoding($false)))
@@ -112,8 +113,9 @@ try {
     else { [IO.File]::Move($pending, $current) }
     Copy-Item -LiteralPath (Join-Path $release 'start.ps1') -Destination (Join-Path $InstallDir 'start.ps1') -Force
     Copy-Item -LiteralPath (Join-Path $release 'setup.ps1') -Destination (Join-Path $InstallDir 'setup.ps1') -Force
+    Copy-Item -LiteralPath (Join-Path $release 'update_app.ps1') -Destination (Join-Path $InstallDir 'update_app.ps1') -Force
     Write-Host "Ready: $InstallDir"
-    Write-Host 'Edit .env, schema.json, and business_rules.md here. Existing files were preserved.'
+    Write-Host 'Edit .env and business_rules.md here. Existing settings and conversation data were preserved.'
     Write-Host 'Run start.ps1. If the app is already running, stop it with Ctrl+C and start it again to use this release.'
 } catch {
     Write-Error $_

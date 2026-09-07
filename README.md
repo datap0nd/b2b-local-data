@@ -1,150 +1,133 @@
-# B2B Local Data
+# B2B Salesforce Query Agent
 
-A local Qwen question-to-table app for a Salesforce extract already loaded into SQL.
-Ask a question, answer a clarification if needed, and get an opportunity summary or opportunity/SKU detail table.
+Ask a locally hosted Qwen model about the Salesforce extract in PostgreSQL. The model produces a validated `QueryPlanV1`; a deterministic engine returns opportunity/SKU tables, metrics, and charts.
 
-**Status: runnable starter with fictional data.** The original internal scripts, actual schema, and final business definitions have not been supplied yet. No work-PC SQL or Qwen connection has been tested. Start with [the intake checklist](docs/intake.md).
+Version 0.2 implements the supplied replication manual with a **FastAPI backend and a browser frontend**. Sorting, chart controls, and layout selection stay in the browser. Queries call the backend explicitly; ordinary clicks do not rerun Python. Qwen/model latency and database refresh time remain separate from UI interactions.
 
-## What is included
+## Current state
 
-- A small browser interface, follow-up questions, table preview, and CSV export of the displayed rows.
-- Local Qwen through Ollama or an OpenAI-compatible local server such as vLLM or LM Studio.
-- PostgreSQL and Windows SQL Server adapters, plus an in-memory SQLite demonstration dataset.
-- An editable column map and deterministic summary/detail rules. Qwen returns a restricted JSON plan; the application compiles parameterized SELECTs and runs the selected table builder.
-- Portable Windows setup/update using downloaded archives. No pip, global Python package installation, admin elevation, service registration, or Git installation on the work PC.
+The canonical schema, normalization, amount formulas, stage mappings, query contract, local history, and database fallback are implemented. Tests use fictional data and a disposable PostgreSQL instance in CI. The work PC's actual database and Qwen endpoint still need a configured connection test. No credentials from the supplied manual are committed.
 
-The starter focuses on the two requested table layouts. Rankings, arbitrary groupings, computed metrics, OR filters, aggregate filters, automatic scheduled updates, Windows service hosting, and team authentication remain integration work. Unsupported questions should prompt a clarification; model interpretation still needs evaluation using your real question examples.
+## Install and start on Windows
 
-## Try it from a checkout
-
-With Python 3.13 available:
-
-```powershell
-python run.py
-```
-
-Open <http://127.0.0.1:8765> and click **Summary table** or **Detailed table**. These buttons use fictional data and do not require Qwen or database credentials.
-
-```powershell
-python run.py --self-test
-```
-
-The first fictional opportunity has three source lines, two SKUs, quantity 4, product-line value 750, and repeated opportunity value 750. Summary must show 750, not 2,250. Detail combines the two rows for SKU-A into quantity 3 and line value 600.
-
-## Install or update on the work PC
-
-Download `setup.ps1` from this repository and run it in PowerShell:
+Download this repository's `setup.ps1` and run:
 
 ```powershell
 .\setup.ps1 -InstallDir "$env:LOCALAPPDATA\B2BLocalData"
 ```
 
-The repository is private by default. Set `B2B_GITHUB_TOKEN` in the setup process environment if GitHub downloads need authentication. Use a token able to read this repository; it is not stored in the app's configuration or sent to Qwen. A ZIP downloaded in an authenticated browser can instead be extracted and used with `-LocalSource`.
-
-Setup resolves the requested GitHub ref to an exact commit, stages a new release, downloads and verifies the pinned Python archive and pure-Python wheels, unpacks dependencies into that release's `vendor` directory, and runs the tests. Only a passing release becomes current. It preserves `.env`, `schema.json`, and `business_rules.md` in the install folder. Rerun the same setup script to update.
-
-Run `start.ps1` in the install folder. Stop a running app with Ctrl+C and restart it after updating. This first version uses an interactive local process; it does not restart existing processes or install a background service.
-
-To install from an extracted source folder:
+For the private GitHub repository, expose `B2B_GITHUB_TOKEN` to the setup process, or download/extract the repository ZIP in an authenticated browser and run:
 
 ```powershell
 .\setup.ps1 -LocalSource . -InstallDir "$env:LOCALAPPDATA\B2BLocalData"
 ```
 
-An offline install uses `-LocalSource`, `-Offline`, and `-DownloadCache` pointing to a folder containing the exact Python ZIP and wheel files named in the lock files. Populate that cache during an online setup first. Qwen runtime/model files are separate and must already be available on the work PC or internal model host.
+Setup downloads a pinned Python 3.13 x64 ZIP and locked wheels, verifies SHA-256 hashes, and extracts dependencies into the app's own `vendor` folder. It uses no pip, system package installation, Node.js, Git, or executable compilation on the work PC. Pandas/NumPy and Pydantic's native extensions are packaged for that exact Python/Windows ABI; the launcher refuses an incompatible or incomplete release.
 
-## Work-PC settings
+Run `start.ps1` in the install folder. The default address is <http://127.0.0.1:8765>. Sample buttons work without SQL or Qwen credentials. A fictional parent amount mismatch is deliberately included so you can see the quality warnings.
 
-Keep a `.env` file in the install folder. This is ordinary local text, not an encrypted secret store; protect it with the work PC's normal Windows file permissions. The repository ignores it. Environment variables override entries in this file, so service-account settings can be used later without changing code. Values are literal, optionally quoted; there is no variable expansion.
+For development, use the installed portable interpreter with this checkout's `run_app.py` after running `scripts/vendor_dependencies.py` with that same interpreter. The native dependencies require Windows x64 Python, including x64 emulation on Windows ARM. There is no frontend build step.
 
-For an Ollama model:
+## Work-PC configuration
 
-```dotenv
-AI_PROVIDER=ollama
-AI_BASE_URL=http://127.0.0.1:11434
-AI_MODEL=your-exact-installed-qwen-model-name
-```
-
-For the same type of local Qwen server used by the data-governance project:
+Edit `.env` **in the install folder**, not in a versioned release. Environment variables override file settings. Values are literal, optionally quoted; no shell expansion occurs. The file is ordinary local text, ignored by Git, and should use your normal Windows file permissions.
 
 ```dotenv
-AI_PROVIDER=openai_compatible
-AI_BASE_URL=http://YOUR_INTERNAL_QWEN_HOST:8000/v1
-AI_MODEL=your-exact-served-model-name
-```
-
-The endpoint must resolve to loopback or a private network address. HTTP proxies and redirects are disabled for model requests. The model must support the configured structured-output protocol. Use a locally hosted model; a private endpoint can itself forward requests elsewhere, so its configuration remains the operator's responsibility. Gemini/cloud fallback is not implemented.
-
-Only questions, conversation context, logical column descriptions, and business rules are sent to Qwen. Result rows and SQL credentials are kept out of the model request. SQL returns matching rows to the local app, which computes the tables with decimal arithmetic.
-
-### PostgreSQL
-
-```dotenv
-DB_KIND=postgres
-DB_HOST=your-internal-server
-DB_PORT=5432
-DB_NAME=your-database
-DB_USER=your-read-only-user
-DB_PASSWORD=your-password
+PGURL=your-postgres-host:5432/postgres
+RO_SQL_USER=your-read-only-user
+RO_SQL_PW=your-password
 DB_SSL=true
 DB_CA_FILE=
+
+AI_PROVIDER=openai_compatible
+LLM_API_URL=http://your-internal-qwen-host:4002/v1/chat/completions
+LLM_API_KEY=your-local-api-key
+LLM_MODEL_NAME=qwen3.8-27b-fast
+
+B2B_DATA_DIR=C:\YourInstallFolder\data
+APP_PORT=8765
 ```
 
-Set an absolute `DB_CA_FILE` path if your database uses an internal CA not trusted by the runtime. TLS verifies the server certificate by default. The adapter sets a read-only transaction and a statement timeout. The pinned pg8000 packages are unpacked by setup. In a developer checkout, use `python scripts/vendor_dependencies.py` once.
+A blank `DB_KIND` selects PostgreSQL when `PGURL` is present, otherwise fictional demo data. `DB_KIND=demo` explicitly stays in demo mode. The old `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` and `AI_*` settings are accepted for existing installations; set `DB_KIND=postgres` with old database variables.
 
-### SQL Server on Windows
+Both complete `/v1/chat/completions` URLs and base URLs ending in `/v1` work. For Ollama, set `AI_PROVIDER=ollama`, its local URL in `LLM_API_URL`, and the exact installed model name. Internal servers using a public-range address require that exact hostname/IP in `B2B_LLM_ALLOWED_HOSTS`. This supports corporate routing without broadly allowing public endpoints. The operator must ensure the endpoint really hosts the local model. Redirects and HTTP proxy forwarding are disabled for model requests; there is no Gemini/cloud fallback.
 
-```dotenv
-DB_KIND=sqlserver
-DB_HOST=your-internal-server
-DB_PORT=1433
-DB_NAME=your-database
-DB_AUTH=windows
-DB_SSL=true
-```
+SQL uses certificate validation by default. If needed, point `DB_CA_FILE` to an internal CA certificate. The application uses a read-only transaction, a statement timeout, and a maximum row bound. Its credentials need SELECT access, not migration privileges.
 
-Alternatively set `DB_AUTH=password`, `DB_USER`, and `DB_PASSWORD`. Windows authentication uses the account running the application. Clear `DB_PORT` when using a named instance in `DB_HOST`. The fixed PowerShell adapter uses Windows' .NET SQL client, so no Python SQL Server package or system ODBC installation is required. Windows PowerShell script execution must be allowed by workplace policy. TLS certificate validation remains enabled; internal certificate trust is managed by Windows. Azure/Entra and other specialized auth flows are not implemented.
+`B2B_DATA_DIR` defaults to `<install-folder>/data`. It contains SQLite conversation history. Questions, clarification responses, and validated plans are saved; result rows and credentials are not. Questions themselves can contain business information, so this folder belongs on the work PC. A saved conversation can be reopened and its query rerun against the current data.
 
-Use a database account with SELECT access to the intended view/table. SQL Server's `ApplicationIntent=ReadOnly` is a connection hint, not a permission restriction.
+## Data contract
 
-## Column mapping and business rules
+The expected raw source is `bi_reporting.b2b_project`, using the exact columns in the supplied manual. To change relation names, use `B2B_RAW_TABLE`, `B2B_SKU_VIEW`, `B2B_OPPORTUNITY_VIEW`, and `B2B_SCHEMA_VERSION_TABLE`. Each uses `schema.relation` notation.
 
-Copy `config/schema.example.json` to `schema.json` in the install folder (setup does this only if the file is absent). Set `table` as separate identifier parts, for example `["dbo", "YourExtract"]`, and map each logical column's `source` to its actual SQL column. Names with spaces are supported. No real column names are assumed by the starter.
+| Grain | Key | Amount |
+| --- | --- | --- |
+| SKU | `opportunity_no`, `product_code` | Sum of `amount_converted` for that pair |
+| Opportunity | `opportunity_no` | Sum of its canonical SKU amounts |
 
-Each field has a type and a level: `opportunity` or `product`. Each view selects a reducer: `sum` for additive product-line numbers, `join` for distinct text values, or `unique` for a value that must agree across the group. Opportunity-level fields cannot use `sum`.
+Text follows the supplied PostgreSQL `btrim` behavior: surrounding spaces are removed, empty strings become null. Numeric strings must match the manual's decimal pattern; malformed values become null. Probability is divided by 100, with an optional `%` suffix. Raw dates use `DD/MM/YYYY`; invalid calendar dates become null in both paths.
 
-- Summary: one row per opportunity; combine product names/SKUs and sum only explicitly additive fields.
-- Detail: one row per opportunity and SKU; repeated SKU lines are summed in the example. Confirm the true source grain and snapshot policy before enabling real data.
-- Opportunity amounts, dates, owners, and currency must agree across an opportunity's selected lines. Conflicts stop the query.
-- Null numeric inputs produce an unknown total rather than treating missing values as zero.
-- Filters apply to source rows before aggregation. For product filters, choose matching rows only or all lines from matching opportunities. An unspecified scope triggers a follow-up.
-- Text matching follows the database collation. It is case-sensitive in the demo/PostgreSQL path by default; SQL Server follows the source collation.
-- Default source cap: 100,000 rows. Exceeding it stops the query so totals cannot be partial. The display limit, at most 1,000 rows, is applied after complete aggregation and is visibly labeled. CSV exports only those displayed rows.
+SQL-style reductions ignore null inputs. A sum with only null inputs stays null. Exported parent opportunity amounts are retained as min/max checks, never added as a measure. Amount discrepancy is true when the parent min/max differ, when the required comparison is unknown, or when the SKU total differs from the parent by more than 0.01. Metadata conflicts use the manual's specified quality fields, deterministic MIN/MAX selection, and visible warnings. These flags do not stop the table.
 
-Edit `business_rules.md` beside `.env` to add business vocabulary, stage mappings, date conventions, and approved examples. After changing local configuration, restart the app. Arbitrary model-generated SQL, Python, or script paths are never executed. Existing Python scripts can be integrated as named, reviewed operations once supplied.
+The optional [canonical-view migration](migrations/001_canonical_views.sql) creates the two views and the version ledger. Apply it manually with a migration-capable role; the app and installer do not run DDL against the work database. It uses guarded date parsing and explicit C collation so the local and SQL paths agree on invalid dates and text ordering.
 
-## Deployment layout
+The repository reads both views within one repeatable-read snapshot. Missing or denied views/version metadata cause a savepoint rollback and reconstruction from the raw table. Connection failures, timeouts, incompatible schema versions, missing columns, and oversized results stop the request rather than being hidden by fallback. The source cap defaults to 100,000 rows; partial inputs are never reported as complete totals.
 
-```text
-B2BLocalData/
-  .env                       local connection/model settings
-  schema.json                actual column map and aggregation rules
-  business_rules.md          local business vocabulary
-  current.json               active release and runtime paths
-  previous.json              prior release pointer after an update
-  setup.ps1                  setup/update entry point
-  start.ps1                  launcher
-  releases/<commit>-<id>/     versioned application and vendor files
-  runtime/python-<version>/   portable runtime
-  .downloads/                reusable verified downloads
-```
+The source must contain the intended current extract. No historical snapshot de-duplication is invented. Rows without an opportunity number or product code are excluded, as in the supplied SQL.
 
-Old releases are retained. To roll back, stop the app, copy `previous.json` over `current.json`, then run `start.ps1`. Do not edit generated pointer paths to untrusted locations. Setup never deletes old releases automatically. The app binds to `127.0.0.1`; LAN access, team sign-in, and unattended hosting should be decided from your existing deployment scripts before exposing it to colleagues.
+## Queries and follow-ups
 
-## Reference material
+The Pydantic contract forbids unknown fields and supports:
 
-- [Existing data-governance setup](https://github.com/datap0nd/data_governance/blob/main/setup.ps1): reference for portable installation and exact-commit updates; this starter does not copy its machine-specific paths or service setup.
-- [Python embedded distribution](https://docs.python.org/3.13/using/windows.html#the-embeddable-package).
-- [Ollama chat API](https://docs.ollama.com/api/chat).
-- [pg8000 driver](https://pypi.org/project/pg8000/).
-- [SQL Server application intent](https://learn.microsoft.com/en-us/dotnet/api/system.data.sqlclient.applicationintent?view=netframework-4.8.1).
+- Intents: table, metric, chart, clarify.
+- Grains: opportunity and opportunity_sku.
+- Filters: eq, ne, gt, ge, lt, le, contains, in, between. Filters are ANDed.
+- Measures: amount, quantity, sku_count, opportunity_count.
+- Up to ten selected/grouping dimensions, three sort fields, and a 1,000-row result preview.
+- Bar, line, area, and scatter charts, with exact values also available in a table.
+
+For **tables**, dimensions select columns and business keys remain included. For **metrics/charts**, dimensions group rows. Opportunity count counts distinct opportunity identifiers even at SKU grain. SKU count counts opportunity/SKU pairs, not globally distinct product codes. Mixed-currency amount metrics require a currency grouping or filter.
+
+Filters run on canonical rows after aggregation. An opportunity-grain product filter selects complete matching opportunities, including all their SKU values. SKU grain computes values only for the matching SKU rows. Ambiguous scope should produce a clarification. Date filters use `YYYY-MM-DD`; probability filters use fractions such as `0.75`.
+
+Stage filters expand the canonical groups:
+
+| Group | Included stages |
+| --- | --- |
+| Won | Won, Rollout Started, Rollout Finished |
+| Open | Identified, Qualified, Negotiation |
+| Lost | Dropped, Lost |
+
+Use `stage_group` for grouped reporting. `context_action=refine` retains omitted settings, replaces existing filters on the same field, and honors `remove_filters`. Explicit empty lists clear dimensions/measures/sort; `replace` starts a fresh query. The server owns the active plan, so the browser cannot substitute its own conversation context. A clarification does not erase the last completed query.
+
+Arbitrary SQL, Python, expressions, and script paths are not execution options. This limits what a model plan can do; it does not guarantee that a model will interpret every business question correctly. Representative work questions and expected results remain the next evaluation input.
+
+Edit `business_rules.md` for local vocabulary supplements. The engine's canonical formulas remain fixed. The v0.1 example `schema.json`, if present, is preserved but no longer used; the supplied Salesforce schema supersedes it. Review any old example business-rule prose when upgrading.
+
+## Responsiveness and freshness
+
+The FastAPI process, SQL connection pool, and conversation store stay alive. A canonical data snapshot is cached in memory for `B2B_CACHE_SECONDS` (default 60). Queries reuse a fresh snapshot; **Refresh data** forces a new one. Failed refreshes report an error and invalidate the cache. Tables display the snapshot load time, not an inferred Salesforce refresh timestamp.
+
+Browser sorting affects displayed rows only. CSV exports those displayed rows. Chart controls do not call SQL or Qwen, and charts display at most 30 groups. The result preview limit is applied after complete filtering/aggregation/sorting, with visible truncation information.
+
+## Identity and hosting
+
+The app listens on loopback and supports the current local Windows user's identity when `B2B_ALLOW_LOCALHOST_IDENTITY=true`. For a corporate reverse proxy, set the authenticated user header, exact trusted proxy addresses, a shared secret of at least 32 characters, and `B2B_PUBLIC_ORIGIN`. The proxy must inject `X-B2B-Proxy-Secret`, overwrite the configured user header, and strip incoming copies. Set localhost identity to false for a proxy-only deployment. Arbitrary browser-supplied user headers are not trusted.
+
+History is scoped by authenticated identity. The SQL source is shared for this team; this is not per-user Salesforce row-level authorization. TLS termination and the actual corporate sign-in mechanism remain deployment configuration. The installer does not change firewall rules, install services, or expose a public listener.
+
+## Updates and rollback
+
+Rerun `setup.ps1` or `update_app.ps1`. `tools/apply_update.ps1` accepts an exact 40-character commit for controlled deployment. Setup stages a separate release, installs its pinned dependencies, runs regression/API checks, verifies the release/configuration, then atomically selects it. Existing `.env`, business rules, and the data/history folder survive updates. Restart the running app to use the new release.
+
+Old release directories and `previous.json` are retained. Stop the app, use the portable interpreter to run `updater.py --home <install-folder> --rollback`, then run `start.ps1`. Rollback validates that pointer targets remain inside this installation and never rewrites history. No unattended polling, arbitrary remote execution, or local PyInstaller compilation is required.
+
+Offline installation uses `-LocalSource`, `-Offline`, and `-DownloadCache` containing the exact Python ZIP and wheel files named in the locks. Populate that cache during an online setup first. Qwen/model files are managed separately on the internal model host.
+
+## Development and validation
+
+`run.py --self-test` runs the test suite with the portable interpreter and app-local vendor packages. `scripts/lock_dependencies.py` is a maintainer-only refresh of explicitly pinned versions, not a runtime resolver. `release_manifest.json` locks the application, query plan, schema, dependency digest, and Python ABI.
+
+CI runs on Windows with the packaged dependencies, checks SQL/Pandas parity against disposable localhost PostgreSQL, exercises a real role with raw-table SELECT access only, and smoke-tests portable installation. Integration tests never use `PGURL`; they require the separate `B2B_TEST_PGURL` setting and refuse non-loopback hosts.
+
+The source layout follows the manual's backend module boundaries (`app_config`, `data_layer`, `query_models`, `query_engine`, `history_store`, `ui_app`, `updater`). The UI and deployment packaging intentionally use FastAPI/static assets and portable archives, following the architecture discussion. See [remaining integration inputs](docs/intake.md).
