@@ -61,27 +61,14 @@ jobs:
       - name: Install browser
         working-directory: frontend
         run: npx playwright install chromium
-      - name: Start isolated fictional-data backend
+      - name: Browser regression with isolated fictional-data backend
         shell: pwsh
-        env:
-          DB_KIND: demo
-          B2B_ENABLE_ACCEPTANCE_UI: 'true'
-          B2B_ALLOW_LOCALHOST_IDENTITY: 'false'
-        run: |
-          $demoHome = Join-Path $env:RUNNER_TEMP 'b2b-browser-tests'
-          New-Item -ItemType Directory -Force -Path $demoHome | Out-Null
-          Start-Process -FilePath (Get-Command python).Source -ArgumentList @('run.py', '--home', $demoHome) -WindowStyle Hidden -RedirectStandardOutput (Join-Path $demoHome 'server.log') -RedirectStandardError (Join-Path $demoHome 'server-error.log')
-          $ready = $false
-          for ($attempt = 0; $attempt -lt 30; $attempt++) {
-            try { Invoke-WebRequest 'http://127.0.0.1:8765/api/bootstrap' -UseBasicParsing | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 1 }
-          }
-          if (-not $ready) { Get-Content (Join-Path $demoHome 'server-error.log'); throw 'Demo backend did not start.' }
-      - name: Browser regression and synthetic acceptance checks
-        working-directory: frontend
-        run: npm run e2e
+        run: .\frontend\scripts\e2e-demo.ps1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: browser-evidence
-          path: frontend/test-results
+          path: |
+            frontend/test-results
+            ${{ runner.temp }}/b2b-browser-tests/server-*.log
           retention-days: 7
