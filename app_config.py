@@ -11,7 +11,7 @@ import sysconfig
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = '0.4.0'
+APP_VERSION = '0.5.0'
 PLAN_VERSION = 1
 # Version of the app's canonical data schema (the 30 raw Salesforce columns and their derived grains).
 DATA_SCHEMA_VERSION = 2

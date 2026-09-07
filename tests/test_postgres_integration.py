@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 import pg8000.dbapi
 from sqlalchemy import URL,create_engine,event
 
-from app_config import AppError,Settings
+from app_config import ROOT,AppError,Settings
 from data_layer import RAW_COLUMNS,SQL_COLUMNS,DataRepository,build_canonical_views
 from query_engine import QueryExecutor,parse_plan
 
@@ -91,3 +91,38 @@ class PostgreSQLParityTests(unittest.TestCase):
         missing=Settings(self.home,{'DB_KIND':'postgres','B2B_RAW_TABLE':self.schema+'.absent'})
         with self.assertRaises(AppError) as error:DataRepository(missing,self.engine()).load()
         self.assertIn('not readable',str(error.exception))
+
+
+@unittest.skipUnless(os.environ.get('B2B_TEST_PGURL'),'Disposable PostgreSQL is not configured')
+class LegacyViewMigrationTests(unittest.TestCase):
+    """Migration 002 keeps the legacy views consistent with the app for padded, unpadded, leap-year, and invalid dates."""
+    def setUp(self):
+        parsed=urlsplit('postgresql://'+os.environ['B2B_TEST_PGURL'])
+        if parsed.hostname not in ('127.0.0.1','localhost','::1'):raise RuntimeError('Integration tests require a disposable loopback database.')
+        self.connection=pg8000.dbapi.connect(host=parsed.hostname,port=parsed.port or 5432,database=parsed.path.lstrip('/'),user=os.environ.get('B2B_TEST_PGUSER','postgres'),password=os.environ.get('B2B_TEST_PGPASSWORD',''),ssl_context=False,timeout=10)
+        self.connection.autocommit=True;self.cursor=self.connection.cursor();self.schema='b2b_test_'+uuid.uuid4().hex
+        self.cursor.execute(f'CREATE SCHEMA {self.schema}')
+        self.cursor.execute(f'CREATE TABLE {self.schema}.b2b_project ('+', '.join('"'+SQL_COLUMNS[n]+'" text' for n in RAW_COLUMNS)+')')
+        for name in ('001_canonical_views.sql','002_legacy_views_unpadded_dates_and_added_columns.sql'):
+            self.cursor.execute((ROOT/'migrations'/name).read_text().replace('bi_reporting.',self.schema+'.'))
+    def tearDown(self):
+        if not re.fullmatch(r'b2b_test_[a-f0-9]{32}',self.schema):raise RuntimeError('Unexpected test schema')
+        self.cursor.execute(f'DROP SCHEMA {self.schema} CASCADE');self.connection.close()
+    def test_view_dates_and_added_columns_match_the_local_parser(self):
+        dates=['1/12/2022','01/12/2022','29/02/2024','29/02/2023','31/04/2026','9/9/2025','09/9/2025','1/1/26','2026-01-01','','  5/3/2026 ','32/01/2026','0/1/2026',None]
+        rows=[]
+        for index,value in enumerate(dates):
+            rows.append(dict.fromkeys(RAW_COLUMNS)|{'opportunity_no':f'O{index:02d}','product_code':'P','close_month':value,'close_date':value,'created_date':value,'last_modified_date':value,
+                                              'quantity':'1','amount_converted':'2.50','opp_amount_converted':'2.50','first_channel':'Web','age':'12','comment':'note','deal_size_on_pricing_date_usd':'99.5'})
+        rows.append(dict(rows[0],comment='other'))   # conflicting attribute inside a pair
+        self.cursor.executemany(f'INSERT INTO {self.schema}.b2b_project VALUES ({", ".join(["%s"]*len(RAW_COLUMNS))})',[[r[n] for n in RAW_COLUMNS] for r in rows])
+        self.cursor.execute(f'SELECT opportunity_no, close_month, close_date, created_date, last_modified_date, first_channel, age, comment, deal_size_on_pricing_date_usd, has_quality_warning FROM {self.schema}.b2b_project_sku_v ORDER BY opportunity_no')
+        local={r['opportunity_no']:r for r in build_canonical_views(rows).sku.to_dict('records')}
+        for opp,close_month,close_date,created,modified,channel,age,comment,deal,warning in self.cursor.fetchall():
+            with self.subTest(opportunity=opp,raw=dates[int(opp[1:])]):
+                mine=local[opp]
+                self.assertEqual((close_month,close_date,created,modified),(mine['close_month'],mine['close_date'],mine['created_date'],mine['last_modified_date']))
+                self.assertEqual((channel,str(age),comment,str(deal),warning),(mine['first_channel'],str(mine['age']),mine['comment'],str(mine['deal_size_on_pricing_date_usd']),bool(mine['has_quality_warning'])))
+        self.cursor.execute(f'SELECT max(version) FROM {self.schema}.b2b_project_schema_version');self.assertEqual(self.cursor.fetchone()[0],2)
+        self.cursor.execute(f'SELECT opportunity_no, first_channel, deal_size_on_pricing_date_usd, has_quality_warning FROM {self.schema}.b2b_project_opportunity_v WHERE opportunity_no=%s',('O00',))
+        self.assertEqual([tuple(map(str,r)) for r in self.cursor.fetchall()],[('O00','Web','99.5','True')])

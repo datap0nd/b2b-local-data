@@ -9,14 +9,16 @@ from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from acceptance_runner import AcceptanceRunner
+from acceptance_suite import manifest
 from app_config import APP_VERSION, ROOT, AppError, verify_release
 from data_layer import DataRepository
 from history_store import HistoryStore
-from query_engine import QUERY_FIELDS, PlannerClient, QueryExecutor, merge_plan, parse_plan
-from query_models import Intent
+from query_engine import PlannerClient, QueryExecutor, parse_plan
+from query_service import QueryService
 
 
 class AskRequest(BaseModel):
@@ -36,6 +38,25 @@ class SampleRequest(BaseModel):
     session_id: str | None=Field(default=None,max_length=64)
     view: Literal['summary','detail']='summary'
     intent: Literal['table','metric','chart']='table'
+
+
+class RunRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    only_failed_from: str | None=Field(default=None,min_length=32,max_length=32,pattern='^[0-9a-f]{32}$')
+
+
+class StepRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    step: int=Field(ge=0,le=999)
+
+
+class BrowserObservation(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    check: int=Field(ge=1,le=99)
+    status: Literal['pass','fail','blocked']
+    expected: dict | list | str | None=None
+    observed: dict | list | str | None=None
+    notes: str | None=Field(default=None,max_length=2000)
 
 
 class Snapshots:
@@ -83,7 +104,9 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     app.state.planner=planner or PlannerClient(settings)
     app.state.snapshots=Snapshots(repository or DataRepository(settings),settings.number('B2B_CACHE_SECONDS',60,low=0,high=3600))
     app.state.executor=QueryExecutor()
-    lane=threading.Lock()
+    app.state.service=QueryService(app.state.planner,app.state.executor)
+    app.state.acceptance=AcceptanceRunner(settings,app.state.snapshots.repository,app.state.service,settings.data_dir)
+    lane=app.state.service.lane
 
     @app.middleware('http')
     async def local_boundary(request:Request,call_next):
@@ -125,12 +148,18 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     @app.get('/style.css')
     def stylesheet(): return FileResponse(ROOT/'web/style.css',media_type='text/css')
 
+    @app.get('/test.js')
+    def test_script(): return FileResponse(ROOT/'web/test.js',media_type='text/javascript')
+
+    @app.get('/favicon.ico')
+    def favicon(): return Response(status_code=204)
+
     @app.get('/api/status')
-    def status():
+    def status(request:Request):
         kind=settings.get('DB_KIND','demo')
         return {'version':APP_VERSION,'database':kind,'source':settings.source_label,'previews':kind in ('demo','csv'),
                 'model':settings.get('LLM_MODEL_NAME') or settings.get('AI_MODEL') or 'Not configured',
-                'cache_seconds':app.state.snapshots.seconds,'snapshot_at':app.state.snapshots.loaded_at}
+                'cache_seconds':app.state.snapshots.seconds,'snapshot_at':app.state.snapshots.loaded_at,'qualification':app.state.acceptance.qualification(request.state.owner)}
 
     @app.get('/api/sessions')
     def sessions(request:Request): return {'sessions':app.state.store.list(request.state.owner)}
@@ -159,15 +188,8 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
             if not payload.question.strip(): raise AppError('Enter a question.')
             owner=request.state.owner
             session_id=payload.session_id or app.state.store.create(owner)
-            history,previous=app.state.store.context(owner,session_id)
-            incoming=app.state.planner.plan(payload.question.strip(),history,previous,payload.view)
-            if set(incoming.remove_filters)-QUERY_FIELDS:
-                raise AppError('Unknown field in remove_filters.')
-            plan=merge_plan(previous,incoming)
-            if plan.intent==Intent.CLARIFY:
-                app.state.store.append(owner,session_id,payload.question,plan.clarification)
-                return {'kind':'clarify','question':plan.clarification,'suggestions':plan.suggestions,'session_id':session_id}
-            return complete(owner,session_id,payload.question,plan)
+            views,timestamp=app.state.snapshots.get()
+            return app.state.service.ask(app.state.store,owner,session_id,payload.question,payload.view,views,timestamp)
         finally: lane.release()
 
     @app.post('/api/sample')
@@ -189,6 +211,48 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         _,plan=app.state.store.context(request.state.owner,payload.session_id)
         if plan is None: raise AppError('This conversation has no completed query yet.')
         return {'kind':'table','table':execute(plan),'plan':plan.model_dump(mode='json'),'session_id':payload.session_id,'suggestions':[]}
+
+    # Acceptance-test APIs: the server owns the suite, the order, and the expected results.
+    @app.get('/api/test/suite')
+    def test_suite(request:Request): return manifest()|{'qualification':app.state.acceptance.qualification(request.state.owner)}
+
+    @app.get('/api/test/runs')
+    def test_runs(request:Request):
+        runs=app.state.acceptance.list_runs(request.state.owner)
+        return {'runs':[{'id':r['id'],'status':r['status'],'started_at':r['started_at'],'finished_at':r.get('finished_at'),'scope':r['scope'],'full_pass':app.state.acceptance.is_full_pass(r),
+                         'source_fingerprint':r['identity']['source_fingerprint']} for r in runs],'qualification':app.state.acceptance.qualification(request.state.owner)}
+
+    @app.post('/api/test/runs')
+    def test_start(request:Request,payload:RunRequest): return app.state.acceptance.start(request.state.owner,payload.only_failed_from)
+
+    @app.get('/api/test/runs/{run_id}')
+    def test_run(request:Request,run_id:str):
+        status=app.state.acceptance.status(request.state.owner,run_id)
+        status['comparison']=app.state.acceptance.comparison(request.state.owner,app.state.acceptance._load(request.state.owner,run_id))
+        return status
+
+    @app.get('/api/test/runs/{run_id}/steps/{step_id}')
+    def test_step_detail(request:Request,run_id:str,step_id:str):
+        detail=app.state.acceptance.detail(request.state.owner,run_id,step_id)
+        if detail is None: raise AppError('Unknown step.')
+        return detail
+
+    @app.post('/api/test/runs/{run_id}/step')
+    def test_step(request:Request,run_id:str,payload:StepRequest): return app.state.acceptance.step(request.state.owner,run_id,payload.step)
+
+    @app.post('/api/test/runs/{run_id}/browser')
+    def test_browser(request:Request,run_id:str,payload:BrowserObservation):
+        return app.state.acceptance.record_browser(request.state.owner,run_id,payload.check,payload.status,payload.expected,payload.observed,payload.notes)
+
+    @app.post('/api/test/runs/{run_id}/cancel')
+    def test_cancel(request:Request,run_id:str): return app.state.acceptance.cancel(request.state.owner,run_id)
+
+    @app.get('/api/test/runs/{run_id}/report')
+    def test_report(request:Request,run_id:str):
+        report=app.state.acceptance.report(request.state.owner,run_id)
+        run=app.state.acceptance._load(request.state.owner,run_id)
+        stamp=run['started_at'].replace(':','').replace('-','')[:15]
+        return Response(report,media_type='text/markdown; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="b2b-test-{stamp}-{run_id[:8]}.md"'})
 
     @app.post('/api/refresh')
     def refresh():

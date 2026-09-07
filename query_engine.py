@@ -1,6 +1,7 @@
 """Validated planning, deterministic follow-up merging, and Pandas execution."""
 from datetime import date
 from decimal import Decimal, InvalidOperation
+import hashlib
 import ipaddress
 import json
 import socket
@@ -13,7 +14,9 @@ from pydantic import ValidationError
 from app_config import AppError
 from data_layer import BOOL_FIELDS, DATE_FIELDS, NUMBER_FIELDS, OPPORTUNITY_COLUMNS, SKU_COLUMNS, STAGE_GROUPS, present, sql_sum, stage_group
 from query_models import ContextAction, FilterClause, Grain, Intent, Measure, QueryPlanV1
+import re
 
+NUMERIC_TEXT=re.compile(r'^-?[0-9]+(\.[0-9]+)?$')
 DEAL_SIZE_FIELD='deal_size_on_pricing_date_usd'
 # Derived fields available to filters, sorting, and remove_filters in addition to the grain columns.
 DERIVED_FIELDS={'stage_group','amount','deal_size'}
@@ -144,6 +147,26 @@ def serialize(value):
     return value
 
 
+DIGEST_VERSION='digest1'
+
+
+def normalize_cell(value):
+    """Canonical text for digests: exact decimals without trailing zeros, ISO dates, JSON null/bool."""
+    value=serialize(value)
+    if value is None: return 'null'
+    if isinstance(value,bool): return 'true' if value else 'false'
+    if isinstance(value,(int,float)) or (isinstance(value,str) and NUMERIC_TEXT.fullmatch(value)):
+        number=Decimal(str(value))
+        return format(number.normalize(),'f') if number!=0 else '0'
+    return str(value)
+
+
+def result_digest(records,columns):
+    """Order-independent, multiplicity-preserving digest (digest1) of complete result rows."""
+    hashes=sorted(hashlib.sha256(json.dumps([normalize_cell(row.get(column)) for column in columns],ensure_ascii=False).encode()).hexdigest() for row in records)
+    return DIGEST_VERSION+':'+hashlib.sha256('\n'.join(hashes).encode()).hexdigest()
+
+
 DEFAULT_COLUMNS = {
     Grain.OPPORTUNITY:['opportunity_no','opportunity_name','end_customer','opportunity_owner','stage','close_date','product_codes','product_names','quantity','opportunity_amount','sku_count','opp_amount_converted_currency','has_amount_discrepancy','has_quality_warning'],
     Grain.OPPORTUNITY_SKU:['opportunity_no','product_code','pet_name','end_customer','opportunity_owner','stage','quantity','sku_amount','amount_converted_currency','has_quality_warning']
@@ -214,11 +237,19 @@ class QueryExecutor:
             result=result.sort_values([f for f,_ in order],ascending=[ascending for _,ascending in order],na_position='last',kind='stable')
         total=len(result)
         limit=plan.limit or 1000
-        rows=[{key:serialize(value) for key,value in row.items()} for row in result.loc[:,columns].head(limit).to_dict('records')]
+        complete=result.loc[:,columns].to_dict('records')
+        digest=result_digest(complete,columns)
+        # Complete-result totals let a viewer compare a preview against everything that matched.
+        totals=None
+        if plan.intent==Intent.TABLE:
+            totals={'amount':serialize(sql_sum(result['amount'])),'quantity':serialize(sql_sum(result['quantity'])),
+                    'opportunity_count':len(set(present(result['opportunity_no']))),'rows':total}
+        rows=[{key:serialize(value) for key,value in row.items()} for row in complete[:limit]]
         warnings=[]
         if quality_count: warnings.append(f'{quality_count:,} matching business rows carry a data-quality warning.')
         if views.excluded_rows: warnings.append(f'{views.excluded_rows:,} raw rows had no opportunity number or product code and were excluded.')
         return {'columns':columns,'column_types':{column:type_of(column) for column in columns},'rows':rows,'total_rows':total,'source_rows':source_rows,'truncated':total>limit,
+            'result_digest':digest,'totals':totals,
             'grain':plan.grain.value,'intent':plan.intent.value,'view':'summary' if plan.grain==Grain.OPPORTUNITY else 'detail',
             'filters':[f.model_dump(mode='json') for f in plan.filters], 'source':views.source,'source_name':views.source_name,'warnings':warnings,
             'scope':'Filters apply to canonical business rows. Cross-grain product/opportunity filters select whole matching opportunities.',

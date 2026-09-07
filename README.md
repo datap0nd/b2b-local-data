@@ -2,7 +2,7 @@
 
 Ask a locally hosted Qwen model about the Salesforce extract in PostgreSQL, or about a local CSV export of the same extract during development. The model produces a validated `QueryPlanV1`; a deterministic engine returns opportunity/SKU tables, metrics, and charts.
 
-Version 0.4 reads all **30 Salesforce columns** with one shared parser from either the raw PostgreSQL table or a local CSV file. Version 0.3 implemented the supplied replication manual with a **FastAPI backend and a browser frontend**, plus a folder-based GitHub installer. Sorting, chart controls, and layout selection stay in the browser. Queries call the backend explicitly; ordinary clicks do not rerun Python. Qwen/model latency and data refresh time remain separate from UI interactions.
+Version 0.5 adds the **Test** button: a standardized live-data acceptance test with an independent reference calculator and a Markdown report (see below). Version 0.4 reads all **30 Salesforce columns** with one shared parser from either the raw PostgreSQL table or a local CSV file. Version 0.3 implemented the supplied replication manual with a **FastAPI backend and a browser frontend**, plus a folder-based GitHub installer. Sorting, chart controls, and layout selection stay in the browser. Queries call the backend explicitly; ordinary clicks do not rerun Python. Qwen/model latency and data refresh time remain separate from UI interactions.
 
 ## Current state
 
@@ -103,7 +103,7 @@ The source must contain the intended current extract. No historical snapshot de-
 
 The Pydantic contract forbids unknown fields and supports:
 
-- Intents: table, metric, chart, clarify.
+- Intents: table, metric, chart, clarify. Every table result also reports complete-result totals and a `result_digest` so previews can be checked against everything that matched.
 - Grains: opportunity and opportunity_sku.
 - Filters: eq, ne, gt, ge, lt, le, contains, in, between. Filters are ANDed.
 - Measures: amount, quantity, sku_count, opportunity_count, deal_size.
@@ -129,6 +129,22 @@ Use `stage_group` for grouped reporting. `context_action=refine` retains omitted
 Arbitrary SQL, Python, expressions, and script paths are not execution options. This limits what a model plan can do; it does not guarantee that a model will interpret every business question correctly. Representative work questions and expected results remain the next evaluation input.
 
 Edit `business_rules.md` for local vocabulary supplements. The engine's canonical formulas remain fixed. The v0.1 example `schema.json`, if present, is preserved but no longer used; the supplied Salesforce schema supersedes it. Review any old example business-rule prose when upgrading.
+
+## Standardized live-data acceptance test
+
+The **Test** button in the header runs a versioned suite of 54 predefined prompt turns (36 independent questions and three six-turn conversations) plus 12 browser checks, and produces one Markdown report to paste into a review. The suite tests three things separately: **interpretation** (did the model understand filters, grain, grouping, and follow-ups), **data correctness** (does every returned value match an independent calculation from the raw source), and **presentation** (does the browser display, sort, export, and chart the results correctly).
+
+The run freezes one snapshot first: the raw relation is read in a single read-only, repeatable-read transaction, the app's canonical grains and an independent reference are built from it, and every case uses that same snapshot regardless of cache expiry, refreshes, or database changes. The report records the snapshot timestamp, relation name, row and key counts, currency distribution, normalization warnings, order-independent source fingerprints (`fp1`) that preserve duplicate multiplicity, the app revision, suite version, business-rule digest, model identity and settings, and the effective date. Owners, customers, products, duplicate pairs, thresholds, and a nonexistent identifier are selected deterministically from the frozen source before any model call, and every substituted value is listed. Missing examples produce **blocked** coverage checks, never empty-result passes.
+
+Expected results come from `reference_evaluator.py`, a separate Decimal implementation of the rules that calls none of the production canonicalization, filtering, aggregation, or follow-up merging code. Each case's authored expectation (in `acceptance_suite.py`) is compared with the effective plan, accepting documented equivalents such as a Won stage-group filter versus its member stages; the reference result is computed from the authored expectation, never from the plan the model returned. Every returned row and cell is compared, together with complete counts, totals, and full-result digests (`digest1`) before the 1,000-row preview limit. Numbers are compared exactly; the only tolerance is the documented 0.01 parent-amount rule.
+
+Test conversations live in a separate store under `B2B_DATA_DIR/acceptance` and never appear among saved conversations; the test panel leaves the user's current question and result untouched. Independent cases use fresh conversations; the three follow-up scenarios share their own. A failed case does not stop unrelated cases; a failed turn that makes later follow-ups impossible marks them **blocked**. Cancel, browser reload (Resume), and an application restart all still yield a partial report. Ordinary questions and test steps go through the same `QueryService` path and the same model-call lock; step requests are idempotent and carry no prompts, plans, SQL, or paths.
+
+The Markdown report (`b2b-test-<timestamp>-<run-id>.md`, downloaded from the panel) contains the run identity and source, a scorecard with failed and blocked checks, per-case evidence (prompt, layout, conversation, expected behavior, returned plan, effective plan, expected versus actual counts, totals, digests, rows, chart specification, assertion outcomes, timings, and keyed differences), the browser observations with expected plot coordinates and recorded drawing operations, a comparison with the previous run (newly failing, fixed, inconsistent cases; source, prompt, rule, app, or model-setting changes; result and latency differences; eligibility for the same three-pass sequence), and review instructions including the CSV header mapping and fingerprint algorithm.
+
+The header shows **Ready for review** only after three consecutive complete full passes with matching source fingerprint, app revision, suite version, business-rule digest, model configuration, and effective date. Failed, blocked, interrupted, cancelled, or missing browser checks prevent qualification; a failed-case-only rerun (`only_failed_from`) helps diagnosis but never counts; any relevant change restarts the sequence. Changed expectations require a reviewed suite revision. Final delivery still follows the reviewer's independent recomputation against the local CSV and a visual review of the charts in the app. Rare conditions absent from the live source, such as mixed currencies or malformed numbers, are covered by development fixtures and are not claimed as exercised by the live run.
+
+By default the suite tests the configured source (the live PostgreSQL relation in production) with the configured model; it also runs against a CSV file, which is how the suite itself is exercised in CI with a scripted model. [migrations/002_legacy_views_unpadded_dates_and_added_columns.sql](migrations/002_legacy_views_unpadded_dates_and_added_columns.sql) optionally refreshes the legacy derived views so that other consumers parse one- and two-digit day-first dates and expose the four added columns exactly like the app; the app itself does not read those views, and applying the migration remains an operator step with a migration-capable role.
 
 ## Responsiveness and freshness
 

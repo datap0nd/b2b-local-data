@@ -324,22 +324,19 @@ class DataRepository:
             raise AppError(f'The source exceeds {cap:,} rows. Increase MAX_SOURCE_ROWS before computing complete totals.')
         return pd.DataFrame(rows, columns=RAW_COLUMNS, dtype=object)
 
-    def load(self):
+    def load_raw(self):
+        """Read the configured source once and return (raw frame, source kind, source name)."""
         kind = self.settings.get('DB_KIND', 'demo')
         if kind == 'demo':
-            views = build_canonical_views(demo_rows())
-            views.source, views.source_name = 'demo', 'fictional demo data'
-            return views
+            return pd.DataFrame(demo_rows(), columns=RAW_COLUMNS, dtype=object), 'demo', 'fictional demo data'
         if kind == 'csv':
             path = self.settings.csv_path
-            raw = read_csv_source(path, self.settings.get('B2B_CSV_ENCODING') or 'utf-8-sig', self._cap())
-            views = build_canonical_views(raw)
-            views.source, views.source_name = 'csv', path.name
-            return views
+            return read_csv_source(path, self.settings.get('B2B_CSV_ENCODING') or 'utf-8-sig', self._cap()), 'csv', path.name
         relation = self.settings.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project'
         try:
             with self._engine().connect() as connection:
                 with connection.begin():
+                    # One read-only, repeatable-read transaction per snapshot.
                     connection.execute(text('SET TRANSACTION READ ONLY'))
                     connection.execute(text(f"SET LOCAL statement_timeout = {self.settings.number('DB_TIMEOUT_SECONDS', 30, high=300) * 1000}"))
                     raw = self._read(connection, relation, self._columns(connection, relation))
@@ -347,6 +344,10 @@ class DataRepository:
             raise
         except Exception:
             raise AppError('PostgreSQL read failed. Check the read-only credentials, source schema, TLS, and connection timeout.') from None
+        return raw, 'postgres', relation
+
+    def load(self):
+        raw, source, source_name = self.load_raw()
         views = build_canonical_views(raw)
-        views.source, views.source_name = 'postgres', relation
+        views.source, views.source_name = source, source_name
         return views

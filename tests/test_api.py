@@ -60,7 +60,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(rerun['table']['rows'],result['table']['rows'])
     def test_status_labels_source_and_previews(self):
         status=self.request('/api/status')
-        self.assertEqual((status['database'],status['source'],status['previews'],status['version']),('demo','Fictional sample data',True,'0.4.0'))
+        self.assertEqual((status['database'],status['source'],status['previews'],status['version']),('demo','Fictional sample data',True,'0.5.0'))
     def test_clarification_never_loads_sql_or_erases_plan(self):
         first=self.request('/api/sample',{'view':'detail'})
         before=self.repository.load.call_count
@@ -167,3 +167,53 @@ class PlannerProtocolTests(unittest.TestCase):
                 self.assertNotIn('db-secret',prompt);self.assertNotIn('model-secret',prompt)
                 for word in ('deal_size','first_channel','deal_size_on_pricing_date_usd','once per opportunity'):self.assertIn(word,prompt)
         finally:server.shutdown();server.server_close();worker.join()
+
+
+class AcceptanceApiTests(unittest.TestCase):
+    """The owner-scoped test APIs drive the suite with a scripted model over HTTP."""
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0,str(Path(__file__).resolve().parent))
+        from acceptance_fixture import ScriptedPlanner,synthetic_records
+        from acceptance_suite import select_witnesses
+        from reference_evaluator import ReferenceSource
+        cls.temp=tempfile.TemporaryDirectory();cls.home=Path(cls.temp.name)
+        cls.records=synthetic_records();witnesses=select_witnesses(ReferenceSource(cls.records),cls.records)[0]
+        repository=MagicMock();frame=__import__('pandas').DataFrame(cls.records,columns=__import__('data_layer').RAW_COLUMNS,dtype=object)
+        repository.load_raw.side_effect=lambda:(frame.copy(),'postgres','test.b2b_project')
+        repository.load.side_effect=lambda:__import__('data_layer').build_canonical_views(frame.copy())
+        cls.local=LocalServer(Settings(cls.home,{'DB_KIND':'postgres','PGURL':'db.example:5432/postgres','LLM_MODEL_NAME':'qwen-test'}),repository=repository,planner=ScriptedPlanner(witnesses))
+    @classmethod
+    def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
+    def request(self,path,body=None,**headers):return self.local.request(path,body,**headers)
+    def test_suite_manifest_and_full_run_over_http(self):
+        suite=self.request('/api/test/suite');self.assertEqual(len(suite['steps']),54);self.assertEqual(len(suite['browser_checks']),12);self.assertFalse(suite['qualification']['ready'])
+        started=self.request('/api/test/runs',{});run_id=started['run']['id'];self.assertEqual(started['next_step'],0)
+        with self.assertRaises(HTTPError) as error:self.request('/api/test/runs',{});self.assertEqual(error.exception.code,400)
+        for body in [{'step':5},{'step':-1},{'prompt':'Show everything','step':0},{'step':0,'plan':{}}]:
+            with self.subTest(body=body),self.assertRaises(HTTPError) as error:self.request(f'/api/test/runs/{run_id}/step',body)
+            self.assertEqual(error.exception.code,400)
+        first=self.request(f'/api/test/runs/{run_id}/step',{'step':0})
+        self.assertEqual(first['step']['status'],'pass');self.assertIn('rows',first['table']);self.assertEqual(first['table']['total_rows'],60)
+        again=self.request(f'/api/test/runs/{run_id}/step',{'step':0});self.assertEqual(again['step']['seconds'],first['step']['seconds'])
+        for index in range(1,54):self.request(f'/api/test/runs/{run_id}/step',{'step':index})
+        with self.assertRaises(HTTPError):self.request(f'/api/test/runs/{run_id}/step',{'step':54})
+        for check in range(1,13):self.request(f'/api/test/runs/{run_id}/browser',{'check':check,'status':'pass','expected':{'x':1},'observed':{'x':1},'notes':'ok'})
+        status=self.request(f'/api/test/runs/{run_id}');self.assertEqual(status['run']['status'],'complete');self.assertTrue(status['full_pass']);self.assertTrue(status['comparison'] is None or 'previous_run' in status['comparison'])
+        detail=self.request(f'/api/test/runs/{run_id}/steps/T25');self.assertEqual(len(detail['result']['rows']),10);self.assertTrue(detail['data']['ok'])
+        request=Request(self.local.base+f'/api/test/runs/{run_id}/report')
+        with self.local.opener.open(request,timeout=10) as response:
+            self.assertEqual(response.headers['Content-Type'],'text/markdown; charset=utf-8');self.assertIn('attachment; filename="b2b-test-',response.headers['Content-Disposition'])
+            report=response.read().decode('utf-8')
+        self.assertIn('## Scorecard',report);self.assertIn('Full pass: **yes**',report)
+        listed=self.request('/api/test/runs');self.assertEqual(listed['runs'][0]['id'],run_id);self.assertTrue(listed['runs'][0]['full_pass'])
+        self.assertEqual(self.request('/api/status')['qualification']['streak'],1)
+        with self.assertRaises(HTTPError) as error:self.request('/api/test/runs/'+'0'*32)
+        self.assertEqual(error.exception.code,400)
+        with self.assertRaises(HTTPError):self.request(f'/api/test/runs/{run_id}/step',{'step':54})
+    def test_cancel_over_http_and_ordinary_questions_share_the_lane(self):
+        started=self.request('/api/test/runs',{});run_id=started['run']['id']
+        self.request(f'/api/test/runs/{run_id}/step',{'step':0})
+        cancelled=self.request(f'/api/test/runs/{run_id}/cancel',{});self.assertEqual(cancelled['run']['status'],'cancelled')
+        with self.assertRaises(HTTPError):self.request(f'/api/test/runs/{run_id}/step',{'step':1})
+        self.assertEqual(self.request('/api/sessions')['sessions'],[])   # test conversations never appear in saved history

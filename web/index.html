@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>B2B Local Data</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>B2B Local Data</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script><script defer src="/test.js"></script></head>
 <body>
-<header><a href="/" class="brand"><span class="mark">b.</span> B2B Local Data</a><span class="local">Local workspace</span></header>
+<header><a href="/" class="brand"><span class="mark">b.</span> B2B Local Data</a><div class="header-right"><span id="readiness" class="readiness" hidden></span><button id="test-open" class="quiet" type="button" title="Run the standardized live-data acceptance test">Test</button><span class="local">Local workspace</span></div></header>
 <main>
   <div class="intro"><p class="eyebrow">YOUR OPPORTUNITIES, IN FOCUS</p><h1>Ask a question.<br>Get a table.</h1><p class="sub">Explore your Salesforce extract, from the whole opportunity to each product.</p></div>
   <section class="ask-card" aria-label="Ask your data">
@@ -17,12 +17,26 @@
   <div class="conversation-top"><label for="session-picker">Conversation</label><select id="session-picker" aria-label="Saved conversations"></select><button id="rerun" class="quiet data-action" hidden>Run saved query</button><button id="reset" class="quiet data-action">New conversation</button></div>
   <div id="conversation" aria-live="polite"><p class="empty">Qwen will ask a follow-up when your question needs more detail.</p></div>
   <div id="suggestions" aria-label="Suggested follow-ups"></div>
-  <section id="result" hidden>
-    <div class="result-header"><div><h2 id="result-title">Your table</h2><p id="result-meta"></p></div><button id="export" class="quiet">Download CSV ↓</button></div>
-    <p id="scope" class="scope"></p><div id="warnings" role="status"></div>
-    <div id="chart-panel" hidden><label for="chart-measure">Chart measure</label><select id="chart-measure"></select><canvas id="chart" role="img" aria-label="Chart of the query result"></canvas><p id="chart-caption"></p></div>
-    <div class="table-wrap"><table id="table"></table></div>
-    <details><summary>Applied filters</summary><pre id="filters"></pre></details>
+<section id="result" class="result-view" hidden>
+    <div class="result-header"><div><h2 class="result-title">Your table</h2><p class="result-meta"></p></div><button class="quiet export" type="button">Download CSV ↓</button></div>
+    <p class="scope"></p><div class="warnings" role="status"></div>
+    <div class="chart-panel" hidden><label>Chart measure <select class="chart-measure"></select></label><canvas class="chart" role="img" aria-label="Chart of the query result"></canvas><p class="chart-caption"></p></div>
+    <div class="table-wrap"><table class="table"></table></div>
+    <details><summary>Applied filters</summary><pre class="filters"></pre></details>
+  </section>
+  <section id="test-panel" class="test-panel" hidden aria-label="Acceptance test">
+    <div class="test-head"><div><h2>Standardized live-data acceptance test</h2><p id="test-suite" class="result-meta">Loading the suite…</p><p id="test-state" class="result-meta"></p></div>
+      <div class="test-controls"><button id="test-start" type="button">Run all checks</button><button id="test-resume" class="quiet" type="button" hidden>Resume</button><button id="test-cancel" class="quiet" type="button" disabled>Cancel</button><button id="test-report" class="quiet" type="button" disabled>Download report</button><button id="test-compare" class="quiet" type="button" disabled>Compare previous run</button><button id="test-close" class="quiet" type="button">Close</button></div></div>
+    <div class="test-grid"><div><span class="eyebrow">CASE</span><p id="test-case">Not started</p></div><div><span class="eyebrow">ELAPSED</span><p id="test-elapsed">0 s</p></div><div><span class="eyebrow">PROGRESS</span><p id="test-progress">—</p></div></div>
+    <div class="test-grid"><div><span class="eyebrow">PROMPT</span><p id="test-prompt" class="mono"></p></div><div><span class="eyebrow">QWEN ANSWER</span><p id="test-answer" class="mono"></p></div><div><span class="eyebrow">CHECKS</span><p id="test-checks"></p></div></div>
+    <pre id="test-comparison" class="mono" hidden></pre>
+    <section id="test-result" class="result-view" hidden>
+    <div class="result-header"><div><h2 class="result-title">Your table</h2><p class="result-meta"></p></div><button class="quiet export" type="button">Download CSV ↓</button></div>
+    <p class="scope"></p><div class="warnings" role="status"></div>
+    <div class="chart-panel" hidden><label>Chart measure <select class="chart-measure"></select></label><canvas class="chart" role="img" aria-label="Chart of the query result"></canvas><p class="chart-caption"></p></div>
+    <div class="table-wrap"><table class="table"></table></div>
+    <details><summary>Applied filters</summary><pre class="filters"></pre></details>
+  </section>
   </section>
   <footer>Qwen plans the query. Your local app calculates the result. Sorting and chart controls work in the browser.</footer>
 </main>
