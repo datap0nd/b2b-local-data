@@ -6,6 +6,26 @@ from query_engine import QUERY_FIELDS, merge_plan
 from query_models import Intent
 
 
+def describe_result(plan,table):
+    """A readable record of what was shown, kept in the conversation history for the user and the model."""
+    layout='opportunity summary' if plan.grain.value=='opportunity' else 'opportunity/SKU detail'
+    kind={'table':'Table','metric':'Grouped metrics','chart':f"{plan.chart_type or ''} chart".strip().capitalize()}[plan.intent.value]
+    parts=[f"{kind} ({layout}): {table['total_rows']:,} rows" + (f", showing {len(table['rows']):,}" if table['truncated'] else '')]
+    if plan.filters:
+        parts.append('filters: '+'; '.join(f"{f.field} {f.operator.value} {f.value!r}" for f in plan.filters))
+    if plan.dimensions:
+        parts.append(('grouped by ' if plan.intent.value!='table' else 'columns: ')+', '.join(plan.dimensions))
+    if plan.measures:
+        parts.append('measures: '+', '.join(m.value for m in plan.measures))
+    if plan.sort:
+        parts.append('sorted by '+', '.join(f"{s.field} {s.direction}" for s in plan.sort))
+    if plan.limit:
+        parts.append(f'limit {plan.limit}')
+    if table.get('totals') and table['totals'].get('amount') is not None:
+        parts.append(f"total amount {table['totals']['amount']}")
+    return ' · '.join(parts)+'.'
+
+
 class QueryService:
     """Ordinary questions and acceptance-test steps share this planner/validation/merge/execution path.
 
@@ -30,5 +50,5 @@ class QueryService:
             return {'kind':'clarify','question':plan.clarification,'suggestions':plan.suggestions,'session_id':session_id,'returned_plan':returned}
         table=self.executor.execute(views,plan)
         table['snapshot_at']=snapshot_at
-        store.append(owner,session_id,question,f"{table['total_rows']} result rows at {plan.grain.value} grain.",plan)
+        store.append(owner,session_id,question,describe_result(plan,table),plan)
         return {'kind':'table','table':table,'plan':plan.model_dump(mode='json'),'suggestions':plan.suggestions,'session_id':session_id,'returned_plan':returned}

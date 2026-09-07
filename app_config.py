@@ -48,24 +48,27 @@ class Settings:
     @classmethod
     def load(cls, home):
         home = Path(home).resolve()
-        # Canonical names first, then the data-governance variables already present on work PCs
-        # (DG_AI_API_URL, DG_AI_API_KEY, DG_AI_MODEL, PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD),
-        # then the pre-0.3 names kept for existing installations.
+        # Precedence: a canonical name set in the environment, then in .env; only when a canonical name is set
+        # nowhere are the data-governance variables already present on work PCs (DG_AI_API_URL, DG_AI_API_KEY,
+        # DG_AI_MODEL, PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD) and the pre-0.3 names used, environment first.
         aliases = {'RO_SQL_USER':('PGUSER','DB_USER'), 'RO_SQL_PW':('PGPASSWORD','DB_PASSWORD'),
                    'LLM_API_URL':('DG_AI_API_URL','AI_BASE_URL'), 'LLM_API_KEY':('DG_AI_API_KEY','AI_API_KEY'), 'LLM_MODEL_NAME':('DG_AI_MODEL','AI_MODEL')}
+        file_layer, env_layer = read_env(home / '.env'), dict(os.environ)
         overrides = {}
-        derived_endpoint = False
-        for layer in (read_env(home / '.env'), dict(os.environ)):
-            for canonical, olds in aliases.items():
-                if not layer.get(canonical):
-                    for old in olds:
-                        if layer.get(old):
-                            layer[canonical] = layer[old]
-                            derived_endpoint = derived_endpoint or (canonical == 'LLM_API_URL' and old == 'DG_AI_API_URL')
-                            break
-            if not layer.get('PGURL') and layer.get('PGHOST'):
-                layer['PGURL'] = f"{layer['PGHOST']}:{layer.get('PGPORT') or 5432}/{layer.get('PGDATABASE') or 'postgres'}"
+        for layer in (file_layer, env_layer):
             overrides.update({k: v for k, v in layer.items() if v != '' or k not in overrides})
+        derived_endpoint = False
+        for canonical, olds in aliases.items():
+            if overrides.get(canonical):
+                continue
+            for old in olds:
+                value = env_layer.get(old) or file_layer.get(old)
+                if value:
+                    overrides[canonical] = value
+                    derived_endpoint = derived_endpoint or (canonical == 'LLM_API_URL' and old == 'DG_AI_API_URL')
+                    break
+        if not overrides.get('PGURL') and overrides.get('PGHOST'):
+            overrides['PGURL'] = f"{overrides['PGHOST']}:{overrides.get('PGPORT') or 5432}/{overrides.get('PGDATABASE') or 'postgres'}"
         values = read_env(ROOT / '.env.example') | overrides
         if 'LLM_API_URL' in overrides and 'AI_PROVIDER' not in overrides:
             values['AI_PROVIDER'] = 'openai_compatible'

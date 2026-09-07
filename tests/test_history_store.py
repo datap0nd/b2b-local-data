@@ -23,5 +23,12 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(self.store.list('bob'),[])
         for action in [lambda:self.store.read('bob',session),lambda:self.store.append('bob',session,'x','y')]:
             with self.assertRaises(AppError):action()
+    def test_model_history_carries_each_turns_plan(self):
+        session=self.store.create('alice');plan=parse_plan({'filters':[{'field':'stage','operator':'eq','value':'Won'}]})
+        self.store.append('alice',session,'won deals','Table (opportunity summary): 2 rows · filters: stage eq Won.',plan)
+        self.store.append('alice',session,'and next year?','Which date field?')
+        history,_=self.store.context('alice',session)
+        self.assertIn('"field":"stage"',history[1]['content']);self.assertTrue(history[1]['content'].startswith('Table (opportunity summary)'))
+        self.assertEqual(history[3]['content'],'Which date field?')
     def test_new_session_has_no_query(self):
         self.assertEqual(self.store.context('alice',self.store.create('alice')),([],None))

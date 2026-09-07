@@ -66,8 +66,10 @@ class HistoryStore:
     def context(self,owner,session):
         saved=self.read(owner,session)
         history=[]
+        # The model sees each earlier answer together with the plan that produced it, so follow-ups refine real context.
         for turn in saved['turns'][-8:]:
-            history.extend([{'role':'user','content':turn['question']},{'role':'assistant','content':turn['response']}])
+            answer=turn['response']+(('\nPlan: '+json.dumps(turn['plan'],separators=(',',':'))) if turn.get('plan') else '')
+            history.extend([{'role':'user','content':turn['question']},{'role':'assistant','content':answer}])
         return history,parse_plan(saved['active_plan']) if saved['active_plan'] else None
 
     def append(self,owner,session,question,response,plan=None):

@@ -57,19 +57,23 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('10.20.30.40',settings.get('B2B_LLM_ALLOWED_HOSTS'))
         self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project')
         with patch.dict('os.environ',environment|{'PGPORT':'6543','PGDATABASE':'bi'},clear=True):self.assertEqual(Settings.load(self.root).postgres,{'host':'db.internal','port':6543,'database':'bi'})
-        (self.root/'.env').write_text('LLM_MODEL_NAME=file-model\nPGURL=other.example:5432/app\n')
+        # A model or database chosen in .env beats the data-governance values from the environment.
+        (self.root/'.env').write_text('LLM_MODEL_NAME=my-qwen\nPGURL=other.example:5432/app\n')
         with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)
-        self.assertEqual(settings.get('LLM_MODEL_NAME'),'Qwen/Qwen3.8-27B');self.assertEqual(settings.postgres['host'],'db.internal')
+        self.assertEqual(settings.get('LLM_MODEL_NAME'),'my-qwen');self.assertEqual(settings.postgres['host'],'other.example')
+        with patch.dict('os.environ',environment|{'LLM_MODEL_NAME':'env-qwen'},clear=True):self.assertEqual(Settings.load(self.root).get('LLM_MODEL_NAME'),'env-qwen')
     def test_legacy_variables_remain_accepted(self):
         with patch.dict('os.environ',{'DB_KIND':'demo','AI_MODEL':'old-model','AI_BASE_URL':'http://localhost:9000/v1','AI_API_KEY':'local-key'},clear=True):
             settings=Settings.load(self.root)
         self.assertEqual(settings.get('LLM_MODEL_NAME'),'old-model')
         self.assertEqual(settings.get('LLM_API_KEY'),'local-key')
-    def test_environment_alias_overrides_file_canonical_name(self):
+    def test_file_canonical_name_beats_environment_alias(self):
         (self.root/'.env').write_text('LLM_MODEL_NAME=file-model\n')
         with patch.dict('os.environ',{'AI_MODEL':'environment-model'},clear=True):
             settings=Settings.load(self.root)
-        self.assertEqual(settings.get('LLM_MODEL_NAME'),'environment-model')
+        self.assertEqual(settings.get('LLM_MODEL_NAME'),'file-model')
+        (self.root/'.env').write_text('AI_MODEL=file-alias\n')
+        with patch.dict('os.environ',{'AI_MODEL':'environment-alias'},clear=True):self.assertEqual(Settings.load(self.root).get('LLM_MODEL_NAME'),'environment-alias')
     def test_manifest_describes_canonical_data_schema(self):
         manifest=json.loads((self.root/'release_manifest.json').read_text())
         self.assertEqual(manifest['app_version'],'0.5.0');self.assertEqual(manifest['data_schema_version'],2)

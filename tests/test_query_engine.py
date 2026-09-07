@@ -5,6 +5,7 @@ from app_config import AppError
 from data_layer import build_canonical_views,demo_rows
 from query_engine import QUERY_FIELDS,QueryExecutor,merge_plan,parse_plan
 from query_models import Measure
+from query_service import describe_result
 
 
 class QueryEngineTests(unittest.TestCase):
@@ -154,3 +155,10 @@ class QueryEngineTests(unittest.TestCase):
         refined=merge_plan(plan,parse_plan({'context_action':'refine','measures':['deal_size'],'remove_filters':['stage']}))
         self.assertEqual(self.executor.execute(self.views,refined)['rows'],[{'stage_group':'Open','deal_size':'2400'},{'stage_group':'Won','deal_size':'1250'}])
         self.assertTrue({'deal_size','amount','stage_group','first_channel','comment'}<=QUERY_FIELDS)
+
+    def test_history_description_names_layout_filters_and_totals(self):
+        plan=parse_plan({'filters':[{'field':'stage','operator':'eq','value':'Won'}],'sort':[{'field':'opportunity_amount','direction':'desc'}],'limit':1})
+        text=describe_result(plan,self.executor.execute(self.views,plan))
+        self.assertEqual(text,"Table (opportunity summary): 2 rows, showing 1 · filters: stage eq 'Won' · sorted by opportunity_amount desc · limit 1 · total amount 1200.")
+        chart=parse_plan({'intent':'chart','chart_type':'bar','dimensions':['stage_group'],'measures':['amount']})
+        self.assertTrue(describe_result(chart,self.executor.execute(self.views,chart)).startswith('Bar chart (opportunity summary): 2 rows · grouped by stage_group · measures: amount.'))

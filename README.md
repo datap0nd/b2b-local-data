@@ -45,7 +45,7 @@ For development, use the installed portable interpreter with this checkout's `ru
 
 ## Work-PC configuration
 
-Edit `.env` **in the install folder**, not in a versioned release. Environment variables override file settings. Values are literal, optionally quoted; no shell expansion occurs. The file is ordinary local text, ignored by Git, and should use your normal Windows file permissions.
+Edit `.env` **in the install folder**, not in a versioned release. For the same setting name, an environment variable overrides the file. The data-governance and legacy alias names are used only when the canonical name is set nowhere, so `LLM_MODEL_NAME` in `.env` always beats `DG_AI_MODEL` from the environment. Values are literal, optionally quoted; no shell expansion occurs. The file is ordinary local text, ignored by Git, and should use your normal Windows file permissions.
 
 The supplied replication manual explicitly included `.env` configuration and the `PGURL`, `RO_SQL_USER`, `RO_SQL_PW`, `LLM_API_URL`, `LLM_API_KEY`, and `LLM_MODEL_NAME` names used below. It also included the `B2B_DATA_DIR`, `B2B_INSTALL_ROOT`, and identity-header settings. `DG_GITHUB_TOKEN` is used by this private-repository installer only and is never sent to SQL or Qwen (the earlier `B2B_GITHUB_TOKEN` name is still accepted from old `.env` files).
 
