@@ -21,6 +21,7 @@ def verify(path,expected):
 
 
 def contained(root,relative):
+    root=Path(root).resolve()
     path=(root/relative).resolve()
     if not path.is_relative_to(root) or path==root:raise ValueError('Invalid archive or cache path.')
     return path
