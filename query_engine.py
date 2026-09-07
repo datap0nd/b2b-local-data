@@ -6,6 +6,7 @@ import ipaddress
 import json
 import socket
 from urllib.parse import urlsplit
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 
 import pandas as pd
@@ -25,13 +26,26 @@ QUERY_FIELDS=set(OPPORTUNITY_COLUMNS+SKU_COLUMNS)|DERIVED_FIELDS
 PRODUCT_FIELDS=set(SKU_COLUMNS)-set(OPPORTUNITY_COLUMNS)
 
 
-def parse_plan(payload):
+def extract_json(text):
+    """The JSON object inside a model reply: reasoning blocks and code fences are stripped, prose around it ignored."""
+    text=re.sub(r'<think>.*?</think>','',text,flags=re.S).strip()
+    fenced=re.search(r'```(?:json)?\s*(\{.*\})\s*```',text,flags=re.S)
+    if fenced: return fenced.group(1)
+    start,end=text.find('{'),text.rfind('}')
+    return text[start:end+1] if start!=-1 and end>start else text
+
+
+def parse_plan(payload,excerpt=None):
     try:
         if isinstance(payload,str):
             return QueryPlanV1.model_validate_json(payload)
         return QueryPlanV1.model_validate(payload)
-    except (ValidationError,ValueError,TypeError):
-        raise AppError('Qwen returned an invalid QueryPlanV1. Rephrase the question or check structured-output support.') from None
+    except (ValidationError,ValueError,TypeError) as error:
+        detail=f' Model reply: {excerpt[:200]!r}.' if excerpt else ''
+        problems=''
+        if isinstance(error,ValidationError):
+            problems=' '+'; '.join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in error.errors()[:3])
+        raise AppError(f'Qwen returned an invalid QueryPlanV1.{problems}{detail} Rephrase the question or check structured-output support.') from None
 
 
 def merge_plan(previous,incoming):
@@ -316,16 +330,39 @@ Rules:\n{settings.rules}'''
                 endpoint+=('/chat/completions' if endpoint.endswith('/v1') else '/v1/chat/completions')
             body={'model':model,'messages':messages,'stream':False,'temperature':0,'max_tokens':5000,'response_format':{'type':'json_object'}}
         else: raise AppError('AI_PROVIDER must be ollama or openai_compatible.')
-        try:
-            request=Request(endpoint,data=json.dumps(body).encode(),headers=headers,method='POST')
-            with build_opener(ProxyHandler({}),NoRedirect()).open(request,timeout=settings.number('AI_TIMEOUT_SECONDS',120,high=300)) as response:
+        where=f'{urlsplit(endpoint).hostname}:{urlsplit(endpoint).port or (443 if endpoint.startswith("https") else 80)} model {model!r}'
+        def redact(text):
+            text=str(text)
+            return (text.replace(key,'***') if key else text)[:300]
+        timeout=settings.number('AI_TIMEOUT_SECONDS',120,high=300)
+        def send(payload_body):
+            request=Request(endpoint,data=json.dumps(payload_body).encode(),headers=headers,method='POST')
+            with build_opener(ProxyHandler({}),NoRedirect()).open(request,timeout=timeout) as response:
                 raw=response.read(1000001)
             if len(raw)>1000000: raise AppError('The model response exceeded the response limit.')
+            return raw
+        try:
+            try: raw=send(body)
+            except HTTPError as error:
+                # Servers without structured-output support reject response_format/format; retry as plain JSON text.
+                reply=redact(error.read()[:1000].decode('utf-8','replace'))
+                if error.code in (400,422) and ('response_format' in body or 'format' in body) and ('format' in reply.lower() or 'json' in reply.lower()):
+                    body.pop('response_format',None); body.pop('format',None); raw=send(body)
+                else:
+                    raise AppError(f'The local Qwen request to {where} failed: HTTP {error.code} {error.reason}. Server reply: {reply or "(empty)"}. Check the endpoint, model name, credentials, and structured-output support.') from None
             payload=json.loads(raw)
             content=payload['message']['content'] if provider=='ollama' else payload['choices'][0]['message']['content']
-            incoming=parse_plan(content)
+            incoming=parse_plan(extract_json(content),excerpt=redact(content))
             if view!='auto': incoming.grain=Grain.OPPORTUNITY if view=='summary' else Grain.OPPORTUNITY_SKU
             return incoming
         except AppError: raise
-        except Exception:
-            raise AppError('The local Qwen request failed. Check the endpoint, model, credentials, and structured-output support.') from None
+        except HTTPError as error:
+            raise AppError(f'The local Qwen request to {where} failed: HTTP {error.code} {error.reason}. Server reply: {redact(error.read()[:1000].decode("utf-8","replace")) or "(empty)"}.') from None
+        except URLError as error:
+            raise AppError(f'The local Qwen endpoint {where} could not be reached: {redact(error.reason)}. Check the URL, the network, and that the model server is running.') from None
+        except TimeoutError:
+            raise AppError(f'The local Qwen request to {where} timed out after {timeout} seconds. Raise AI_TIMEOUT_SECONDS (up to 300) or use a faster model.') from None
+        except (KeyError,IndexError,TypeError,ValueError) as error:
+            raise AppError(f'The local Qwen endpoint {where} answered, but not with an OpenAI-style chat completion ({type(error).__name__}). Reply excerpt: {redact(raw[:300].decode("utf-8","replace"))}. Check LLM_API_URL points at /v1/chat/completions.') from None
+        except Exception as error:
+            raise AppError(f'The local Qwen request to {where} failed: {type(error).__name__}: {redact(error)}.') from None

@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 from urllib.request import Request,build_opener,ProxyHandler
 
 import uvicorn
-from app_config import Settings
+from app_config import AppError,Settings
 from data_layer import build_canonical_views,demo_rows
 from query_engine import PlannerClient,parse_plan
 from ui_app import create_app
@@ -217,3 +217,57 @@ class AcceptanceApiTests(unittest.TestCase):
         cancelled=self.request(f'/api/test/runs/{run_id}/cancel',{});self.assertEqual(cancelled['run']['status'],'cancelled')
         with self.assertRaises(HTTPError):self.request(f'/api/test/runs/{run_id}/step',{'step':1})
         self.assertEqual(self.request('/api/sessions')['sessions'],[])   # test conversations never appear in saved history
+
+
+class PlannerFailureTests(unittest.TestCase):
+    """Model failures name the cause without the key; servers without response_format support still work."""
+    def serve(self,handler):
+        server=ThreadingHTTPServer(('127.0.0.1',0),handler);worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+        return server,worker
+    def settings(self,port,**extra):
+        return Settings(Path('.'),{'AI_PROVIDER':'openai_compatible','LLM_MODEL_NAME':'test-qwen','LLM_API_URL':f'http://127.0.0.1:{port}/v1/chat/completions','LLM_API_KEY':'model-secret'}|extra)
+    def test_http_error_and_bad_shape_are_explained(self):
+        class Stub(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers['Content-Length']))
+                if self.path.endswith('/v1/chat/completions'):data=b'{"error":{"message":"model test-qwen not found; key model-secret"}}';self.send_response(404)
+                else:data=b'<html>not an api</html>';self.send_response(200)
+                self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        server,worker=self.serve(Stub)
+        try:
+            with self.assertRaises(AppError) as error:PlannerClient(self.settings(server.server_address[1])).plan('Show deals',[])
+            text=str(error.exception);self.assertIn('HTTP 404',text);self.assertIn('model test-qwen not found',text);self.assertNotIn('model-secret',text);self.assertIn(f"127.0.0.1:{server.server_address[1]}",text)
+            with self.assertRaises(AppError) as error:PlannerClient(self.settings(server.server_address[1],LLM_API_URL=f'http://127.0.0.1:{server.server_address[1]}/other/chat/completions')).plan('Show deals',[])
+            self.assertIn('not with an OpenAI-style chat completion',str(error.exception))
+        finally:server.shutdown();server.server_close();worker.join()
+        with self.assertRaises(AppError) as error:PlannerClient(self.settings(1)).plan('Show deals',[])
+        self.assertIn('could not be reached',str(error.exception))
+    def test_response_format_rejection_falls_back_and_wrapped_json_is_parsed(self):
+        seen=[]
+        class Stub(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])));seen.append(payload)
+                if 'response_format' in payload:
+                    data=b'{"error":"response_format is not supported by this server"}';self.send_response(400)
+                else:
+                    content='<think>reasoning here</think>Sure! ```json\n{"intent":"table","filters":[{"field":"stage","operator":"eq","value":"Won"}]}\n``` Done.'
+                    data=json.dumps({'choices':[{'message':{'content':content}}]}).encode();self.send_response(200)
+                self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        server,worker=self.serve(Stub)
+        try:
+            plan=PlannerClient(self.settings(server.server_address[1])).plan('Show won deals',[])
+            self.assertEqual(plan.filters[0].value,'Won');self.assertEqual(len(seen),2);self.assertNotIn('response_format',seen[1])
+        finally:server.shutdown();server.server_close();worker.join()
+    def test_invalid_plan_names_the_problem(self):
+        class Stub(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers['Content-Length']))
+                data=json.dumps({'choices':[{'message':{'content':'{"intent":"dance","limit":"ten"}'}}]}).encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        server,worker=self.serve(Stub)
+        try:
+            with self.assertRaises(AppError) as error:PlannerClient(self.settings(server.server_address[1])).plan('Show deals',[])
+            self.assertIn('intent',str(error.exception));self.assertIn('dance',str(error.exception))
+        finally:server.shutdown();server.server_close();worker.join()
