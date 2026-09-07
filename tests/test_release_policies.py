@@ -73,6 +73,8 @@ class ReleaseTests(unittest.TestCase):
         (self.root/'.env').write_text('local_ai_endpoint=http://192.168.5.5:9000/v1\nLLM_MODEL_NAME=chosen\n')
         with patch.dict('os.environ',{'LOCAL_AI_MODEL':'env-model'},clear=True):settings=Settings.load(self.root)
         self.assertEqual((settings.get('LLM_API_URL'),settings.get('LLM_MODEL_NAME')),('http://192.168.5.5:9000/v1','chosen'))
+        self.assertEqual(settings.source_of('LLM_API_URL'),'.env LOCAL_AI_ENDPOINT');self.assertEqual(settings.source_of('LLM_MODEL_NAME'),'.env LLM_MODEL_NAME (overriding LOCAL_AI_MODEL)')
+        self.assertEqual(settings.source_of('AI_TIMEOUT_SECONDS'),'default')
     def test_legacy_variables_remain_accepted(self):
         with patch.dict('os.environ',{'DB_KIND':'demo','AI_MODEL':'old-model','AI_BASE_URL':'http://localhost:9000/v1','AI_API_KEY':'local-key'},clear=True):
             settings=Settings.load(self.root)

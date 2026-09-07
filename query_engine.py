@@ -357,6 +357,7 @@ Rules:\n{settings.rules}'''
             body={'model':model,'messages':messages,'stream':settings.flag('B2B_LLM_STREAM',True),'temperature':0,'max_tokens':5000}
         else: raise AppError('AI_PROVIDER must be ollama or openai_compatible.')
         where=f'{urlsplit(endpoint).hostname}:{urlsplit(endpoint).port or (443 if endpoint.startswith("https") else 80)} model {model!r}'
+        where+=f" (endpoint from {settings.source_of('LLM_API_URL')}, model from {settings.source_of('LLM_MODEL_NAME')})" if hasattr(settings,'source_of') else ''
         def redact(text):
             text=str(text)
             return (text.replace(key,'***') if key else text)[:300]

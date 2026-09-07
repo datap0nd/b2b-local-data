@@ -159,6 +159,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         kind=settings.get('DB_KIND','demo')
         return {'version':APP_VERSION,'database':kind,'source':settings.source_label,'previews':kind in ('demo','csv'),
                 'model':settings.get('LLM_MODEL_NAME') or settings.get('AI_MODEL') or 'Not configured',
+                'model_source':settings.source_of('LLM_MODEL_NAME') if hasattr(settings,'source_of') else 'default','endpoint_source':settings.source_of('LLM_API_URL') if hasattr(settings,'source_of') else 'default',
                 'cache_seconds':app.state.snapshots.seconds,'snapshot_at':app.state.snapshots.loaded_at,'qualification':app.state.acceptance.qualification(request.state.owner)}
 
     @app.get('/api/sessions')

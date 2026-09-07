@@ -59,16 +59,23 @@ class Settings:
         file_layer.update({k.upper(): v for k, v in list(file_layer.items()) if k.upper() != k and k.upper() not in file_layer})
         env_layer.update({k.upper(): v for k, v in list(env_layer.items()) if k.upper() != k and k.upper() not in env_layer})
         overrides = {}
-        for layer in (file_layer, env_layer):
+        sources = {}
+        for label, layer in (('.env', file_layer), ('environment', env_layer)):
             overrides.update({k: v for k, v in layer.items() if v != '' or k not in overrides})
+            sources.update({k: f'{label} {k}' for k, v in layer.items() if v != ''})
         derived_endpoint = False
         for canonical, olds in aliases.items():
             if overrides.get(canonical):
+                # Note aliases that are present but overridden, so a stale .env value is easy to spot.
+                shadowed = [old for old in olds if env_layer.get(old) or file_layer.get(old)]
+                if shadowed:
+                    sources[canonical] = sources.get(canonical, canonical) + ' (overriding ' + ', '.join(shadowed) + ')'
                 continue
             for old in olds:
                 value = env_layer.get(old) or file_layer.get(old)
                 if value:
                     overrides[canonical] = value
+                    sources[canonical] = ('environment ' if env_layer.get(old) else '.env ') + old
                     derived_endpoint = derived_endpoint or (canonical == 'LLM_API_URL' and old in ('LOCAL_AI_ENDPOINT', 'DG_AI_API_URL'))
                     break
         if not overrides.get('PGURL') and overrides.get('PGHOST'):
@@ -91,8 +98,13 @@ class Settings:
         rules_path = home / 'business_rules.md'
         rules = (rules_path if rules_path.exists() else ROOT / 'config/business_rules.example.md').read_text(encoding='utf-8-sig')
         settings = cls(home, values, rules)
+        settings.sources = sources
         settings.validate()
         return settings
+
+    def source_of(self, key):
+        """Where a setting's value came from: '.env NAME', 'environment NAME', or the built-in default."""
+        return getattr(self, 'sources', {}).get(key, 'default')
 
     def get(self, key, default=''):
         return self.values.get(key, default)

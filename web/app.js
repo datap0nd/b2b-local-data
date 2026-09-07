@@ -167,7 +167,7 @@ function showQualification(q) {
   badge.hidden=false;badge.textContent=q.ready?'Ready for review':`Acceptance: ${q.streak} of ${q.required} passes`;badge.className='readiness'+(q.ready?' ready':'');badge.title=q.reason;
 }
 window.B2B={ResultView,csvText,compareValues,api,CHART,mainView,showQualification,message};
-(async()=>{try{const status=await api('/api/status');$('status').textContent=`${status.source} · Qwen: ${status.model} · v${status.version}`;$('samples').hidden=!status.previews;
+(async()=>{try{const status=await api('/api/status');$('status').textContent=`${status.source} · Qwen: ${status.model} (${status.model_source||'default'}; endpoint ${status.endpoint_source||'default'}) · v${status.version}`;$('samples').hidden=!status.previews;
   $('samples-label').textContent=status.database==='csv'?'Preview the CSV file without Qwen':'Try the fictional dataset';showQualification(status.qualification);
   if(sessionId){try{await loadSession(sessionId);}catch{sessionId=null;}}if(!sessionId)await newSession();else await listSessions();
 }catch(e){$('status').textContent='Could not connect to the app.';message(e.message,'error');}})();
