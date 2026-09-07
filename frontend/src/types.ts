@@ -17,10 +17,14 @@ export interface Freshness {
   reused?: boolean;
 }
 
-export interface QualityWarning { code: string; count: number; message: string; records: Row[] }
+export interface QualityIssue { code: string; field?: string; message: string; values?: unknown; product_total?: Cell; exported_total?: Cell; difference?: Cell; currency?: string | null }
+export interface QualityRecord { opportunity_no: Cell; opportunity_name?: Cell; product_code?: Cell; issues?: QualityIssue[] }
+export interface QualityWarning { code: string; count: number; message: string; records: QualityRecord[] }
 
 export interface ResultMetadata {
   version: 2;
+  calculation_version?: number;
+  sort?: {field: string; direction: 'asc' | 'desc'}[];
   currency: { code: string | null; mixed: boolean; codes: Record<string, number>; source: string };
   complete: { rows: number; opportunities?: number; sku_pairs?: number | null; quantity?: string | null; groups?: number; by_currency?: Record<string, { amount: string | null; quantity: string | null; opportunities: number; rows: number }> };
   warnings: QualityWarning[];
@@ -60,7 +64,7 @@ export interface TablePayload {
 }
 
 export interface Metric { label: string; value: string; raw: Cell; currency?: string | null; note?: string }
-export interface AnswerText { title: string; sentence: string; metrics: Metric[] }
+export interface AnswerText { title: string; context?: string; sentence: string; metrics: Metric[] }
 
 export interface AnswerPayload {
   kind: 'table';

@@ -5,8 +5,10 @@ data_layer, query_engine, or query_service, so a defect in the production canoni
 filtering, aggregation, or follow-up merging cannot hide inside the expected values.
 Column names follow the published data contract so results can be compared cell by cell.
 
-reference-2 adds the typed result digest (digest2), ISO date text from typed database columns,
-and keyed canonical-grain diagnostics; the aggregation rules are unchanged from reference-1.
+reference-3 follows the independently documented September 2026 export evidence:
+Amount (converted) repeats the whole opportunity; Opp Amount (converted) is the
+additive source line. This is deliberately declared here without importing the
+production mapping. Hand-derived asymmetric fixtures check it independently.
 """
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -14,7 +16,7 @@ import hashlib
 import json
 import re
 
-EVALUATOR_VERSION = 'reference-2'
+EVALUATOR_VERSION = 'reference-3'
 FINGERPRINT_VERSION = 'fp1'
 DIGEST_VERSION = 'digest2'
 
@@ -30,8 +32,8 @@ STAGE_MEMBERS = {'Won': ['Won', 'Rollout Started', 'Rollout Finished'], 'Open': 
 SKU_LEVEL_TEXT = ['gscm_product_group_new', 'pet_name', 'amount_converted_currency']
 OPPORTUNITY_TEXT = [f for f in RAW_TEXT if f not in ('opportunity_no', 'product_code') and f not in SKU_LEVEL_TEXT]
 ATTRIBUTES = ['first_channel', 'age', 'comment', 'deal_size_on_pricing_date_usd']
-CONFLICT_FIELDS = ['opp_amount_converted', 'opportunity_name', 'end_customer', 'pet_name', 'gscm_product_group_new', 'stage', 'opportunity_owner',
-                   'amount_converted_currency'] + ATTRIBUTES
+CONFLICT_FIELDS = [f for f in RAW_TEXT[2:] if f not in ('amount_converted_currency', 'opp_amount_converted_currency')] + [
+    'amount_converted', 'age', 'deal_size_on_pricing_date_usd', 'probability', 'close_month', 'close_date', 'created_date']
 SKU_COLUMNS = ['opportunity_no', 'product_code'] + [f for f in RAW_TEXT if f not in ('opportunity_no', 'product_code')] + [
     'quantity', 'sku_amount', 'exported_opp_amount_min', 'exported_opp_amount_max', 'exported_opp_amount_value_count', 'probability',
     'age', 'deal_size_on_pricing_date_usd'] + RAW_DATE + ['source_row_count', 'has_quality_warning']
@@ -113,6 +115,21 @@ def r_sum(values):
 
 def distinct_count(values):
     return len(set(known(values)))
+
+
+def currency_state(rows, field):
+    values = tuple(sorted({r[field] for r in rows}, key=lambda value: (value is None, str(value))))
+    valid = len(values) == 1 and values[0] is not None
+    return values, values[0] if valid else None, not valid
+
+
+def memberships(rows):
+    values = tuple(sorted({r['first_channel'] for r in rows if r['first_channel'] is not None}))
+    return values, 'Multiple channels' if len(values) > 1 else (values[0] if values else None)
+
+
+def incomplete_money(rows):
+    return any(r['amount_converted'] is None or r['opp_amount_converted'] is None for r in rows)
 
 
 def column_kind(name):
@@ -226,24 +243,37 @@ class ReferenceSource:
             for f in RAW_TEXT[2:]:
                 sku[f] = r_min(col(f))
             sku['quantity'] = r_sum(col('quantity'))
-            sku['sku_amount'] = r_sum(col('amount_converted'))
-            sku['exported_opp_amount_min'] = r_min(col('opp_amount_converted'))
-            sku['exported_opp_amount_max'] = r_max(col('opp_amount_converted'))
-            sku['exported_opp_amount_value_count'] = distinct_count(col('opp_amount_converted'))
+            codes, line_currency, invalid_line_currency = currency_state(rows, 'opp_amount_converted_currency')
+            _, parent_currency, invalid_parent_currency = currency_state(rows, 'amount_converted_currency')
+            sku['amount_converted_currency'] = sku['opp_amount_converted_currency'] = line_currency
+            sku['amount_currency_values'], sku['has_invalid_amount_currency'] = codes, invalid_line_currency
+            sku['has_missing_line_amount'] = any(raw['opp_amount_converted'] is None for raw in rows)
+            sku['exported_opp_amount_currency'] = parent_currency
+            sku['first_channel_values'], sku['first_channel'] = memberships(rows)
+            sku['sku_amount'] = None if invalid_line_currency else r_sum(col('opp_amount_converted'))
+            sku['exported_opp_amount_min'] = r_min(col('amount_converted'))
+            sku['exported_opp_amount_max'] = r_max(col('amount_converted'))
+            sku['exported_opp_amount_value_count'] = distinct_count(col('amount_converted'))
             sku['probability'] = r_min(col('probability'))
             sku['age'] = r_min(col('age'))
             sku['deal_size_on_pricing_date_usd'] = r_min(col('deal_size_on_pricing_date_usd'))
             for f in RAW_DATE:
                 sku[f] = r_max(col(f)) if f == 'last_modified_date' else r_min(col(f))
             sku['source_row_count'] = len(rows)
-            sku['has_quality_warning'] = any(distinct_count(col(f)) > 1 for f in CONFLICT_FIELDS)
+            sku['has_quality_warning'] = (any(distinct_count(col(f)) > 1 for f in CONFLICT_FIELDS)
+                                          or incomplete_money(rows) or invalid_line_currency or invalid_parent_currency)
             self.sku.append(sku)
         by_opportunity = {}
         for sku in self.sku:
             by_opportunity.setdefault(sku['opportunity_no'], []).append(sku)
         self.opportunity = []
+        original_groups = {}
+        for raw in normalized:
+            if raw['opportunity_no'] is not None and raw['product_code'] is not None:
+                original_groups.setdefault(raw['opportunity_no'], []).append(raw)
         for opp in sorted(by_opportunity):
             skus = by_opportunity[opp]
+            originals = original_groups[opp]
             col = lambda f: [s[f] for s in skus]
             row = {'opportunity_no': opp}
             for f in OPPORTUNITY_TEXT:
@@ -254,7 +284,14 @@ class ReferenceSource:
             for f in RAW_DATE:
                 row[f] = r_max(col(f)) if f == 'last_modified_date' else r_min(col(f))
             row['quantity'] = r_sum(col('quantity'))
-            amount = r_sum(col('sku_amount'))
+            codes, line_currency, invalid_line_currency = currency_state(originals, 'opp_amount_converted_currency')
+            _, parent_currency, invalid_parent_currency = currency_state(originals, 'amount_converted_currency')
+            row['opp_amount_converted_currency'] = line_currency
+            row['amount_currency_values'], row['has_invalid_amount_currency'] = codes, invalid_line_currency
+            row['has_missing_line_amount'] = any(raw['opp_amount_converted'] is None for raw in originals)
+            row['exported_opp_amount_currency'] = parent_currency
+            row['first_channel_values'], row['first_channel'] = memberships(originals)
+            amount = None if invalid_line_currency else r_sum(col('sku_amount'))
             row['opportunity_amount'] = amount
             row['sku_count'] = len(skus)
             row['source_row_count'] = sum(col('source_row_count'))
@@ -263,9 +300,12 @@ class ReferenceSource:
             low, high = r_min(col('exported_opp_amount_min')), r_max(col('exported_opp_amount_max'))
             row['exported_opp_amount_min'], row['exported_opp_amount_max'] = low, high
             # The only tolerance in the whole evaluator: the documented 0.01 parent-amount rule.
-            discrepancy = low is None or high is None or amount is None or low != high or abs(amount - high) > Decimal('0.01')
+            discrepancy = (incomplete_money(originals) or invalid_line_currency or invalid_parent_currency or line_currency != parent_currency
+                           or low is None or high is None or amount is None or low != high or abs(amount - high) > Decimal('0.01'))
             row['has_amount_discrepancy'] = discrepancy
-            conflict = any(distinct_count(col(f)) > 1 for f in ATTRIBUTES)
+            opportunity_conflicts = [f for f in OPPORTUNITY_TEXT + ['age', 'deal_size_on_pricing_date_usd', 'probability'] + RAW_DATE
+                                     if f not in ('opp_amount_converted_currency', 'last_modified_date')]
+            conflict = any(distinct_count([original[f] for original in originals]) > 1 for f in opportunity_conflicts)
             row['has_quality_warning'] = bool(any(col('has_quality_warning')) or discrepancy or conflict)
             self.opportunity.append(row)
         self.sku_by_opportunity = by_opportunity
@@ -336,6 +376,16 @@ def row_matches(row, clause, grain, source):
     value = value_of(row, field, grain, source)
     if field == 'stage':
         return stage_filter_matches(value, op, target)
+    if field == 'first_channel' and row.get('first_channel_values'):
+        members = row['first_channel_values']
+        if op == 'eq':
+            return target in members or value == target
+        if op == 'in':
+            return any(item in target for item in members) or value in target
+        if op == 'ne':
+            return target not in members and value != target
+        if op == 'contains':
+            return any(target.casefold() in item.casefold() for item in members)
     return matches(value, op, target)
 
 
@@ -345,12 +395,26 @@ def apply_filters(source, grain, filters):
     own_columns = set(OPPORTUNITY_COLUMNS if grain == 'opportunity' else SKU_COLUMNS) | {'stage_group', 'amount', 'deal_size'}
     own = [c for c in filters if c['field'] in own_columns]
     foreign = [c for c in filters if c['field'] not in own_columns]
-    selected = [row for row in rows if all(row_matches(row, c, grain, source) for c in own)]
+    money_fields = {'amount', 'sku_amount', 'opportunity_amount'}
+    own_money = [c for c in own if c['field'] in money_fields]
+    own_nonmoney = [c for c in own if c['field'] not in money_fields]
+    selected = [row for row in rows if all(row_matches(row, c, grain, source) for c in own_nonmoney)]
     if foreign:
         other_grain = 'sku' if grain == 'opportunity' else 'opportunity'
         others = source.sku if grain == 'opportunity' else source.opportunity
-        keep = {row['opportunity_no'] for row in others if all(row_matches(row, c, other_grain, source) for c in foreign)}
+        foreign_money = [c for c in foreign if c['field'] in money_fields]
+        foreign_nonmoney = [c for c in foreign if c['field'] not in money_fields]
+        eligible = {row['opportunity_no'] for row in selected}
+        others = [row for row in others if row['opportunity_no'] in eligible and all(row_matches(row, c, other_grain, source) for c in foreign_nonmoney)]
+        keep = {row['opportunity_no'] for row in others}
         selected = [row for row in selected if row['opportunity_no'] in keep]
+        if foreign_money:
+            require_complete_amount(others)
+        keep = {row['opportunity_no'] for row in others if all(row_matches(row, c, other_grain, source) for c in foreign_money)}
+        selected = [row for row in selected if row['opportunity_no'] in keep]
+    if own_money:
+        require_complete_amount(selected)
+    selected = [row for row in selected if all(row_matches(row, c, grain, source) for c in own_money)]
     return selected
 
 
@@ -363,6 +427,22 @@ def sort_rows(rows, order, columns_of):
         values.sort(key=lambda r: columns_of(r, field), reverse=not ascending)
         result = values + nulls
     return result
+
+
+def require_complete_amount(rows):
+    if any(row.get('has_missing_line_amount') or row.get('has_invalid_amount_currency') for row in rows):
+        raise ValueError('Amount is incomplete or has mixed/missing source-line currencies; review the affected rows.')
+
+
+def complete_amount(rows, grain):
+    """An independently checked scalar: no partial subtotal or implicit conversion."""
+    column = 'opportunity_amount' if grain == 'opportunity' else 'sku_amount'
+    currency_column = 'opp_amount_converted_currency' if grain == 'opportunity' else 'amount_converted_currency'
+    if any(row.get('has_missing_line_amount') or row.get('has_invalid_amount_currency') for row in rows):
+        return None
+    if len({row[currency_column] for row in rows}) > 1:
+        return None
+    return r_sum([row[column] for row in rows])
 
 
 def evaluate(source, spec):
@@ -381,15 +461,19 @@ def evaluate(source, spec):
             if key not in columns:
                 columns.insert(0, key)
         order = spec.get('sort') or [(k, True) for k in keys]
+        if any(field in {'amount', 'sku_amount', 'opportunity_amount'} for field, _ in order):
+            require_complete_amount(rows)
         ordered = sort_rows(rows, order, getter)
         complete = [{c: getter(row, c) for c in columns} for row in ordered]
         limit = spec.get('limit') or 1000
-        totals = {'amount': r_sum([getter(r, 'amount') for r in ordered]), 'quantity': r_sum([r['quantity'] for r in ordered]),
+        totals = {'amount': complete_amount(ordered, grain), 'quantity': r_sum([r['quantity'] for r in ordered]),
                   'opportunity_count': distinct_count([r['opportunity_no'] for r in ordered]), 'rows': len(ordered)}
         return {'columns': columns, 'keys': keys, 'rows': complete[:limit], 'total': len(ordered), 'totals': totals,
                 'digest': digest_rows(complete, columns), 'limit': limit, 'kinds': {c: column_kind(c) for c in columns}}
     group_fields = list(spec.get('group', []))
     measures = list(spec['measures'])
+    if 'amount' in measures:
+        require_complete_amount(rows)
     groups = {}
     for row in rows:
         key = tuple(getter(row, f) for f in group_fields)
@@ -399,6 +483,9 @@ def evaluate(source, spec):
         record = dict(zip(group_fields, key))
         for measure in measures:
             if measure == 'amount':
+                currency_column = 'opp_amount_converted_currency' if grain == 'opportunity' else 'amount_converted_currency'
+                if len({row[currency_column] for row in members}) > 1:
+                    raise ValueError('Amount combines multiple currencies; group or filter by currency.')
                 record[measure] = r_sum([getter(r, 'amount') for r in members])
             elif measure == 'quantity':
                 record[measure] = r_sum([r['quantity'] for r in members])
@@ -443,7 +530,12 @@ def summarize_matching_products(source, sku_rows):
         members = grouped[opp]
         row = dict(parent)
         row['quantity'] = r_sum([m['quantity'] for m in members])
-        row['opportunity_amount'] = r_sum([m['sku_amount'] for m in members])
+        codes = tuple(sorted({code for member in members for code in member['amount_currency_values']}, key=lambda code: (code is None, str(code))))
+        row['has_invalid_amount_currency'] = len(codes) != 1 or codes[0] is None
+        row['has_missing_line_amount'] = any(member['has_missing_line_amount'] for member in members)
+        row['amount_currency_values'] = codes
+        row['opp_amount_converted_currency'] = None if row['has_invalid_amount_currency'] else codes[0]
+        row['opportunity_amount'] = None if row['has_invalid_amount_currency'] else r_sum([m['sku_amount'] for m in members])
         row['sku_count'] = len(members)
         row['source_row_count'] = sum(m['source_row_count'] for m in members)
         row['product_codes'] = ', '.join(sorted(set(known([m['product_code'] for m in members])))) or None
@@ -480,7 +572,7 @@ def evaluate_view(source, spec, view):
     ordered = sort_rows(rows, [(k, True) for k in keys], getter)
     complete = [{c: getter(row, c) for c in columns} for row in ordered]
     limit = spec.get('limit') or 1000
-    totals = {'amount': r_sum([getter(r, 'amount') for r in ordered]), 'quantity': r_sum([r['quantity'] for r in ordered]),
+    totals = {'amount': complete_amount(ordered, target), 'quantity': r_sum([r['quantity'] for r in ordered]),
               'opportunity_count': distinct_count([r['opportunity_no'] for r in ordered]), 'rows': len(ordered)}
     return {'columns': columns, 'keys': keys, 'rows': complete[:limit], 'total': len(ordered), 'totals': totals,
             'digest': digest_rows(complete, columns), 'limit': limit, 'kinds': {c: column_kind(c) for c in columns}}

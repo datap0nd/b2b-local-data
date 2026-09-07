@@ -27,3 +27,4 @@ releases/
 dependencies/
 vendor.*/
 .setup.lock
+.config-backups/

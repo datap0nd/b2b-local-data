@@ -1,4 +1,4 @@
-import {useMemo, useState} from 'react';
+import {useEffect, useMemo, useState} from 'react';
 import {columnPinningFeature, columnSizingFeature, columnVisibilityFeature, createColumnHelper, createPaginatedRowModel, createSortedRowModel, rowPaginationFeature, rowSortingFeature, tableFeatures, useTable, type ColumnVisibilityState, type SortingState} from '@tanstack/react-table';
 import {ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Columns3, Info} from 'lucide-react';
 import {Button} from './ui/button';
@@ -23,12 +23,17 @@ export interface ResultTableProps {
   onPageSize?: (size: number) => void;
   onDetails?: (row: Row) => void;
   onSortChange?: (sorted: boolean) => void;
+  onSortedRows?: (rows: Row[]) => void;
+  sorting?: SortingState;
+  onSorting?: (sorting: SortingState) => void;
   columns?: string[];         // visible columns override
 }
 
-export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPageSize, onDetails, onSortChange, columns}: ResultTableProps) {
+export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPageSize, onDetails, onSortChange, onSortedRows, sorting: controlledSorting, onSorting, columns}: ResultTableProps) {
   const visible = columns ?? visibleColumns(table);
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [localSorting, setLocalSorting] = useState<SortingState>([]);
+  const sorting = controlledSorting ?? localSorting;
+  const setSorting = onSorting ?? setLocalSorting;
   const [visibility, setVisibility] = useState<ColumnVisibilityState>({});
   const [pageIndex, setPageIndex] = useState(0);
   const merged = useMemo(() => Object.fromEntries(visible.map(c => [c, MERGE[c] && table.columns.includes(MERGE[c]) && !visible.includes(MERGE[c]) ? MERGE[c] : null])), [visible, table.columns]);
@@ -63,12 +68,14 @@ export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPa
   const pageRows = t.getRowModel().rows;
   const pageCount = Math.max(1, Math.ceil(rows.length / (mode === 'preview' ? 8 : pageSize)));
   const shownColumns = t.getVisibleLeafColumns();
+  const sortedRows = t.getSortedRowModel().rows;
+  useEffect(() => { onSortedRows?.(sortedRows.map(row => row.original)); }, [sortedRows, onSortedRows]);
 
   return (
     <div className="flex flex-col gap-2" data-testid="result-table" data-mode={mode}>
       {mode === 'full' && (
         <div className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
-          <span data-testid="page-summary">{rows.length.toLocaleString()} rows loaded · page {pageIndex + 1} of {pageCount}</span>
+          <span data-testid="page-summary">Page {pageIndex + 1} of {pageCount}</span>
           <label className="ml-auto flex items-center gap-2">Rows per page
             <select value={pageSize} onChange={e => { onPageSize?.(Number(e.target.value)); setPageIndex(0); }} aria-label="Rows per page" className="h-8 rounded-md border border-line bg-canvas px-2 text-sm text-ink">
               {[25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}

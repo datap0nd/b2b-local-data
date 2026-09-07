@@ -70,6 +70,20 @@ class PostgreSQLParityTests(unittest.TestCase):
     def test_select_only_role_reads_the_raw_table(self):
         actual=DataRepository(self.settings,self.engine(restricted=True)).load()
         self.assert_parity(actual,build_canonical_views(self.rows))
+    def test_declared_sql_adapter_mapping_has_hand_derived_asymmetric_totals(self):
+        # Adapter behavior is tested against invented source definitions. This
+        # does not confirm what similarly named columns mean in a live export.
+        self.cursor.execute(f'DELETE FROM {self.schema}.b2b_project')
+        rows=[]
+        for product,line in [('A','40'),('B','60')]:
+            rows.append(dict.fromkeys(RAW_COLUMNS)|{'opportunity_no':'CONTRACT-1','product_code':product,'amount_converted':'100',
+                'opp_amount_converted':line,'amount_converted_currency':'EUR','opp_amount_converted_currency':'USD','quantity':'1'})
+        self.cursor.executemany(f'INSERT INTO {self.schema}.b2b_project VALUES ({", ".join(["%s"]*len(RAW_COLUMNS))})',[[row[name] for name in RAW_COLUMNS] for row in rows])
+        actual=DataRepository(self.settings,self.engine(restricted=True)).load()
+        self.assertEqual([str(value) for value in actual.sku.sku_amount],['40','60'])
+        self.assertEqual(str(actual.opportunity.iloc[0].opportunity_amount),'100')
+        self.assertEqual(actual.opportunity.iloc[0].opp_amount_converted_currency,'USD')
+        self.assertEqual(actual.opportunity.iloc[0].exported_opp_amount_currency,'EUR')
     def test_csv_and_all_text_postgres_inputs_produce_identical_tables_and_totals(self):
         write_export(self.home/'export.csv',self.rows)
         from_csv=DataRepository(Settings(self.home,{'DB_KIND':'csv','B2B_CSV_PATH':'export.csv'})).load()
@@ -95,7 +109,7 @@ class PostgreSQLParityTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get('B2B_TEST_PGURL'),'Disposable PostgreSQL is not configured')
 class LegacyViewMigrationTests(unittest.TestCase):
-    """Migration 002 keeps the legacy views consistent with the app for padded, unpadded, leap-year, and invalid dates."""
+    """Historical date/attribute parsing compatibility only, not current money-contract parity."""
     def setUp(self):
         parsed=urlsplit('postgresql://'+os.environ['B2B_TEST_PGURL'])
         if parsed.hostname not in ('127.0.0.1','localhost','::1'):raise RuntimeError('Integration tests require a disposable loopback database.')
@@ -113,7 +127,8 @@ class LegacyViewMigrationTests(unittest.TestCase):
         rows=[]
         for index,value in enumerate(dates):
             rows.append(dict.fromkeys(RAW_COLUMNS)|{'opportunity_no':f'O{index:02d}','product_code':'P','close_month':value,'close_date':value,'created_date':value,'last_modified_date':value,
-                                              'quantity':'1','amount_converted':'2.50','opp_amount_converted':'2.50','first_channel':'Web','age':'12','comment':'note','deal_size_on_pricing_date_usd':'99.5'})
+                                              'quantity':'1','amount_converted':'2.50','opp_amount_converted':'2.50','amount_converted_currency':'USD','opp_amount_converted_currency':'USD',
+                                              'first_channel':'Web','age':'12','comment':'note','deal_size_on_pricing_date_usd':'99.5'})
         rows.append(dict(rows[0],comment='other'))   # conflicting attribute inside a pair
         self.cursor.executemany(f'INSERT INTO {self.schema}.b2b_project VALUES ({", ".join(["%s"]*len(RAW_COLUMNS))})',[[r[n] for n in RAW_COLUMNS] for r in rows])
         self.cursor.execute(f'SELECT opportunity_no, close_month, close_date, created_date, last_modified_date, first_channel, age, comment, deal_size_on_pricing_date_usd, has_quality_warning FROM {self.schema}.b2b_project_sku_v ORDER BY opportunity_no')

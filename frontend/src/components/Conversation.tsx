@@ -22,7 +22,7 @@ interface TurnProps { turn: ConversationTurn; onView: Props['onView']; onPresent
 const Turn = memo(function Turn({turn, onView, onPresentation, onExplore, onSuggestion, onRunWithCurrent}: TurnProps) {
   return (
     <article key={turn.id} className="flex flex-col gap-3" data-testid="turn">
-      <div className="flex justify-end"><p className="max-w-[780px] whitespace-pre-wrap rounded-2xl bg-surface px-4 py-2.5 text-[15px]" data-testid="user-turn">{turn.question}</p></div>
+      <div className="flex justify-end"><p className="max-w-[780px] whitespace-pre-wrap rounded-2xl bg-accent-soft px-4 py-2.5 text-[15px] text-ink" data-testid="user-turn">{turn.question}</p></div>
       <div className="max-w-full" data-testid="assistant-turn" data-status={turn.assistant.status}>
         {turn.assistant.status === 'pending' && (
           <div className="flex items-center gap-2 text-sm text-ink-2" role="status" aria-live="polite">
@@ -104,8 +104,9 @@ export function Conversation({turns, onView, onPresentation, onExplore, onSugges
         <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-6 px-4 py-6 md:px-6">
           {empty && (
             <div className="mx-auto mt-[12vh] max-w-[620px] text-center">
-              <h1 className="text-[26px] font-semibold tracking-tight">What would you like to understand?</h1>
-              <p className="mt-2 text-[15px] text-ink-2">Ask about opportunities, products, owners, stages, and amounts. Every answer shows its numbers, its data, and when the data was updated.</p>
+              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-accent">B2B intelligence</p>
+              <h1 className="text-[clamp(28px,4vw,42px)] font-semibold leading-tight tracking-tight">Your pipeline.<br />A clearer picture.</h1>
+              <p className="mx-auto mt-4 max-w-[460px] text-[15px] text-ink-2">Explore opportunities, products and performance. Ask a question to start an analysis.</p>
               {samples && <div className="mt-6">{samples}</div>}
             </div>
           )}

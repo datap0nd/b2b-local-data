@@ -19,7 +19,7 @@ import pandas as pd
 from acceptance_runner import IDENTITY_KEYS, REPORT_VERSION, AcceptanceRunner
 from acceptance_suite import BROWSER_CHECKS, STEP_INDEX, STEPS, SUITE_VERSION, check_clarification, manifest
 from app_config import AppError, Settings
-from data_layer import RAW_COLUMNS, SQL_COLUMNS, build_canonical_views, clean_date, demo_rows, resolve_columns
+from data_layer import OPPORTUNITY_COLUMNS, SKU_COLUMNS, RAW_COLUMNS, SQL_COLUMNS, build_canonical_views, clean_date, demo_rows, resolve_columns
 from history_store import HistoryStore
 from query_engine import DEFAULT_COLUMNS, PlanRejected, PlannerClient, QueryExecutor, merge_plan, normalize_plan, parse_plan, result_digest, supported_suggestions, validate_execution
 from query_models import Grain
@@ -245,20 +245,20 @@ class EvaluatorTypingTests(unittest.TestCase):
         self.assertEqual(cell_token(Decimal('1E+3'), 'number'), 'n:1000'); self.assertEqual(cell_token('0.750', 'number'), 'n:0.75'); self.assertEqual(cell_token(7, 'text'), 's:7')
         text_rows = [{'opportunity_no': '007'}]; number_rows = [{'opportunity_no': '7'}]
         self.assertNotEqual(digest_rows(text_rows, ['opportunity_no']), digest_rows(number_rows, ['opportunity_no']))
-        self.assertTrue(digest_rows(text_rows, ['opportunity_no']).startswith(DIGEST_VERSION + ':')); self.assertEqual(EVALUATOR_VERSION, 'reference-2')
+        self.assertTrue(digest_rows(text_rows, ['opportunity_no']).startswith(DIGEST_VERSION + ':')); self.assertEqual(EVALUATOR_VERSION, 'reference-3')
 
     def test_production_and_reference_digests_agree_on_leading_zeros_unicode_decimals_and_nulls(self):
         rows = demo_rows()
         rows[0].update(opportunity_no='00042', end_customer='Zoë Ångström GmbH', amount_converted='10.50', opp_amount_converted='10.50', probability=None, close_date='')
-        rows[1].update(opportunity_no='00042', amount_converted='0.005', opp_amount_converted='10.50', probability=None, close_date='')
+        rows[1].update(opportunity_no='00042', amount_converted='10.50', opp_amount_converted='0.005', probability=None, close_date='')
         views = build_canonical_views(rows); reference = ReferenceSource(rows)
         for plan, spec in [({}, {'grain': 'opportunity', 'intent': 'table', 'columns': DEFAULT_COLUMNS[Grain.OPPORTUNITY][1:]}),
                            ({'intent': 'metric', 'dimensions': ['end_customer'], 'measures': ['amount', 'opportunity_count']}, {'grain': 'opportunity', 'intent': 'metric', 'group': ['end_customer'], 'measures': ['amount', 'opportunity_count']})]:
             with self.subTest(plan=plan):
                 outcome = compare(evaluate(reference, spec), QueryExecutor().execute(views, parse_plan(plan)))
                 self.assertTrue(outcome['ok'], outcome)
-        self.assertEqual(reference.summary()['opportunity_digest'], result_digest(views.opportunity.to_dict('records'), list(views.opportunity.columns)))
-        self.assertEqual(reference.summary()['sku_digest'], result_digest(views.sku.to_dict('records'), list(views.sku.columns)))
+        self.assertEqual(reference.summary()['opportunity_digest'], result_digest(views.opportunity.to_dict('records'), OPPORTUNITY_COLUMNS))
+        self.assertEqual(reference.summary()['sku_digest'], result_digest(views.sku.to_dict('records'), SKU_COLUMNS))
         self.assertEqual(views.opportunity.iloc[0]['opportunity_no'], '00042')
 
     def test_compare_reports_type_mismatches_and_preview_scope(self):
@@ -314,7 +314,7 @@ class RunnerAccountingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.home = Path(self.temp.name)
         self.records = synthetic_records(); self.witnesses = witnesses_for(self.records)
-        self.settings = Settings(self.home, {'DB_KIND': 'postgres', 'PGURL': 'db.example:5432/postgres', 'LLM_MODEL_NAME': 'qwen-test', 'LLM_API_URL': 'http://127.0.0.1:4002/v1/chat/completions'}, rules='- local rule')
+        self.settings = Settings(self.home, {'DB_KIND': 'postgres', 'B2B_SOURCE_CONTRACT_VERIFIED':'true', 'PGURL': 'db.example:5432/postgres', 'LLM_MODEL_NAME': 'qwen-test', 'LLM_API_URL': 'http://127.0.0.1:4002/v1/chat/completions'}, rules='- local rule')
         self.repository = FrameRepository(self.records)
     def tearDown(self): self.temp.cleanup()
     def runner(self, planner=None, **kwargs):
@@ -339,7 +339,8 @@ class RunnerAccountingTests(unittest.TestCase):
         counts = status['counts']
         self.assertTrue(counts['accounted']); self.assertEqual(counts['by_state']['pass'], len(STEPS)); self.assertEqual(counts['browser_passed'], len(BROWSER_CHECKS)); self.assertEqual(len(BROWSER_CHECKS), 16)
         identity = status['run']['identity']
-        self.assertEqual((identity['suite_version'], identity['evaluator_version'], identity['digest_version']), (SUITE_VERSION, 'reference-2', 'digest2'))
+        self.assertEqual((identity['suite_version'], identity['evaluator_version'], identity['digest_version']), (SUITE_VERSION, 'reference-3', 'digest2'))
+        self.assertEqual(identity['calculation_version'],3)
         self.assertEqual(identity['prompt_digest'], 'sha256:scripted-planner'); self.assertIn('stream', identity['model_config']); self.assertEqual(status['run']['report_version'], REPORT_VERSION)
         self.assertTrue(all(k in identity for k in IDENTITY_KEYS))
         self.assertEqual(status['run']['snapshot']['parity']['ok'], True); self.assertTrue(status['run']['snapshot']['retained_snapshot'])
@@ -348,7 +349,7 @@ class RunnerAccountingTests(unittest.TestCase):
         for heading in ('### Step status accounting', '### Canonical parity diagnostics', '## Release decision', '### Coverage limitations', 'Fingerprint field order', 'digest2', 'Planner prompt digest', 'Subsidiary Code'):
             self.assertIn(heading, report)
         self.assertIn(f'| total accounted | {len(STEPS)} of {len(STEPS)} |', report); self.assertIn('This run is **qualified**', report)
-        self.assertEqual(manifest()['suite_version'], '2.0.0'); self.assertEqual(len(manifest()['browser_checks']), 16)
+        self.assertEqual(manifest()['suite_version'], '3.0.0'); self.assertEqual(len(manifest()['browser_checks']), 16)
 
     def test_recovered_steps_are_distinguished_and_double_rejection_errors(self):
         runner, planner = self.runner(rejections={'T01': ['{"intent":"dance"}'], 'T02': ['{"intent":"dance"}', '{"limit":"ten"}']})

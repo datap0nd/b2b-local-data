@@ -63,7 +63,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(rerun['table']['rows'],result['table']['rows'])
     def test_status_labels_source_and_previews(self):
         status=self.request('/api/status')
-        self.assertEqual((status['database'],status['source'],status['previews'],status['version']),('demo','Fictional sample data',True,'0.6.0'))
+        self.assertEqual((status['database'],status['source'],status['previews'],status['version']),('demo','Fictional sample data',True,'0.7.0'))
     def test_clarification_never_loads_sql_or_erases_plan(self):
         first=self.request('/api/sample',{'view':'detail'})
         before=self.repository.load.call_count
@@ -188,7 +188,7 @@ class AcceptanceApiTests(unittest.TestCase):
         repository=MagicMock();frame=__import__('pandas').DataFrame(cls.records,columns=__import__('data_layer').RAW_COLUMNS,dtype=object)
         repository.load_raw.side_effect=lambda:(frame.copy(),'postgres','test.b2b_project')
         repository.load.side_effect=lambda:__import__('data_layer').build_canonical_views(frame.copy())
-        cls.local=LocalServer(Settings(cls.home,{'DB_KIND':'postgres','PGURL':'db.example:5432/postgres','LLM_MODEL_NAME':'qwen-test','B2B_ENABLE_ACCEPTANCE_UI':'true'}),repository=repository,planner=ScriptedPlanner(witnesses))
+        cls.local=LocalServer(Settings(cls.home,{'DB_KIND':'postgres','B2B_SOURCE_CONTRACT_VERIFIED':'true','PGURL':'db.example:5432/postgres','LLM_MODEL_NAME':'qwen-test','B2B_ENABLE_ACCEPTANCE_UI':'true'}),repository=repository,planner=ScriptedPlanner(witnesses))
     @classmethod
     def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
     def request(self,path,body=None,**headers):return self.local.request(path,body,**headers)

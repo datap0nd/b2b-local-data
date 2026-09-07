@@ -1,21 +1,32 @@
-import {Clock} from 'lucide-react';
-import {Hint} from './ui/tooltip';
+import {useEffect, useState} from 'react';
+import {Tooltip, TooltipContent, TooltipTrigger} from './ui/tooltip';
 import {formatUpdated} from '@/format';
 import type {Freshness as FreshnessInfo} from '@/types';
 
-/** "Data updated 7 Sep, 19:20" from the verified snapshot time; never the load time or a record's modification date. */
+export const FRESH_FOR = 24 * 60 * 60_000;
+export function freshnessState(freshness: FreshnessInfo | null | undefined, now: number): 'fresh' | 'stale' | 'unknown' {
+  if (freshness?.status !== 'verified' || !freshness.updated_at) return 'unknown';
+  const age = now - Date.parse(freshness.updated_at);
+  return !Number.isFinite(age) || age < 0 ? 'unknown' : age < FRESH_FOR ? 'fresh' : 'stale';
+}
+
+/** One focusable dot by the brand, based only on the verified dataset timestamp. */
 export function Freshness({freshness}: {freshness: FreshnessInfo | null | undefined}) {
-  if (!freshness || freshness.status !== 'verified' || !freshness.updated_at) {
-    return (
-      <Hint text={freshness?.reason ?? 'No verified data-update time exists for this snapshot.'}>
-        <span className="inline-flex items-center gap-1 text-xs text-ink-3" data-testid="freshness" data-status="unavailable"><Clock className="size-3.5" />Data update time unavailable</span>
-      </Hint>
-    );
-  }
-  const shown = formatUpdated(freshness.updated_at);
-  return (
-    <Hint text={`${shown?.full} (source: ${freshness.method === 'commit_timestamp' ? 'database commit time' : 'load record'}${freshness.reused ? ', verified earlier for the same dataset' : ''})`}>
-      <span className="inline-flex items-center gap-1 text-xs text-ink-3" data-testid="freshness" data-status="verified"><Clock className="size-3.5" />Data updated {shown?.short}</span>
-    </Hint>
-  );
+  const [now, setNow] = useState(Date.now);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const updated = Date.parse(freshness?.updated_at ?? '');
+    const tick = () => setNow(Date.now());
+    tick();
+    const remaining = updated + FRESH_FOR - Date.now();
+    const timeout = remaining > 0 && remaining <= FRESH_FOR ? window.setTimeout(tick, remaining) : undefined;
+    const interval = window.setInterval(tick, 60_000);
+    window.addEventListener('focus', tick);
+    return () => { window.clearTimeout(timeout); window.clearInterval(interval); window.removeEventListener('focus', tick); };
+  }, [freshness?.updated_at]);
+  const status = freshnessState(freshness, now);
+  const text = status === 'unknown' ? 'Data update time unavailable.' : `Data updated ${formatUpdated(freshness!.updated_at)?.full}.`;
+  return <Tooltip open={open} onOpenChange={setOpen}><TooltipTrigger asChild><button type="button" aria-label={text} onClick={event => { event.preventDefault(); setOpen(value => !value); }} data-testid="freshness" data-status={status} className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-surface-2">
+    <span aria-hidden="true" className={`size-2 rounded-full ${status === 'fresh' ? 'bg-emerald-600' : status === 'stale' ? 'bg-red-600' : 'bg-slate-400'}`} />
+  </button></TooltipTrigger><TooltipContent>{text}</TooltipContent></Tooltip>;
 }

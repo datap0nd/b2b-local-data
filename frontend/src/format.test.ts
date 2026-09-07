@@ -85,7 +85,7 @@ describe('filter chips and CSV export', () => {
     const types = table().column_types;
     expect(filterText({field: 'stage', operator: 'in', value: ['Won', 'Lost']}, types)).toBe('Stage is one of Won, Lost');
     expect(filterText({field: 'opportunity_amount', operator: 'gt', value: 5000}, types)).toBe('Amount more than 5,000');
-    expect(filterText({field: 'close_date', operator: 'between', value: ['2026-01-01', '2026-12-31']}, types)).toMatch(/^Close date between .*2026 and .*2026$/);
+    expect(filterText({field: 'close_date', operator: 'between', value: ['2026-01-01', '2026-12-31']}, types)).toBe('Closing in 2026');
   });
   it('exports every column with exact values, quoting, and formula guards', () => {
     const t = table({columns: ['opportunity_no', 'comment', 'opportunity_amount'], column_types: {opportunity_no: 'text', comment: 'text', opportunity_amount: 'number'}});

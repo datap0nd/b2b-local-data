@@ -7,6 +7,9 @@ import {Conversation} from './components/Conversation';
 import {ExpandedAnalysis} from './components/ExpandedAnalysis';
 import {Login} from './components/Login';
 import {Sidebar} from './components/Sidebar';
+import {Freshness} from './components/Freshness';
+import {Dialog, DialogContent} from './components/ui/dialog';
+import {useFreshness} from './useFreshness';
 import type {AnswerPayload, Bootstrap, ConversationTurn, PresentationName, SessionSummary, TablePayload, ViewName} from './types';
 
 const AcceptancePanel = lazy(() => import('./dev/AcceptancePanel'));
@@ -29,6 +32,7 @@ export function App() {
   const [narrow, setNarrow] = useState(() => window.innerWidth < 900);
   const [expandedId, setExpandedId] = useState<number | string | null>(null);
   const [devOpen, setDevOpen] = useState(false);
+  const freshness = useFreshness(!!boot && !boot.identity.login_required);
   const scrollBefore = useRef(0);
   const collapsedBefore = useRef(false);
   const counter = useRef(0);
@@ -163,21 +167,23 @@ export function App() {
     </div>
   ) : null;
 
-  const devEntry = boot.capabilities.acceptance_ui ? <Button variant="ghost" size="sm" className="w-full justify-start text-ink-3" onClick={() => setDevOpen(true)} data-testid="test-open"><FlaskConical />Test</Button> : null;
+  const devEntry = <Button variant="ghost" size="sm" aria-label={boot.capabilities.acceptance_ui ? 'Test' : 'Test — disabled, view setup instructions'} className="test-entry w-full justify-start text-ink-2" onClick={() => { setDevOpen(true); setOverlayOpen(false); }} data-testid="test-open"><FlaskConical /><span>Test</span>{!boot.capabilities.acceptance_ui && <span className="ml-auto text-xs text-ink-3">Disabled</span>}</Button>;
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-canvas">
+    <div className="flex h-dvh w-screen overflow-hidden bg-page">
       <Sidebar sessions={sessions} currentId={sessionId} collapsed={collapsed} overlay={narrow} open={overlayOpen}
         onToggle={() => setCollapsed(v => !v)} onClose={() => setOverlayOpen(false)} onNew={() => { void newSession(); setOverlayOpen(false); }}
         onSelect={id => { setExpandedId(null); setOverlayOpen(false); void loadSession(id).catch(() => {}); }}
         onRename={(id, title) => { void api.rename(id, title).then(refreshSessions); }}
         onDelete={id => { if (!confirm('Delete this conversation?')) return; void api.remove(id).then(async () => { if (id === sessionId) await newSession(); else await refreshSessions(); }); }}
-        devEntry={devEntry} />
+        devEntry={devEntry} freshness={freshness} />
       <main className="flex min-w-0 flex-1 flex-col">
         {narrow && (
-          <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+          <div className="flex items-center gap-2 border-b border-line bg-canvas px-3 py-2">
             <Button variant="ghost" size="icon-sm" aria-label="Open history" onClick={() => setOverlayOpen(true)}><Menu /></Button>
             <span className="text-sm font-semibold">B2B</span>
+            <Freshness freshness={freshness} />
+            <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setDevOpen(true)} data-testid="test-open-mobile"><FlaskConical />Test</Button>
           </div>
         )}
         {expanded && expanded.assistant.status === 'answer' ? (
@@ -195,6 +201,7 @@ export function App() {
         )}
       </main>
       {devOpen && boot.capabilities.acceptance_ui && <Suspense fallback={null}><AcceptancePanel onClose={() => setDevOpen(false)} /></Suspense>}
+      <Dialog open={devOpen && !boot.capabilities.acceptance_ui} onOpenChange={setDevOpen}><DialogContent title="Test is disabled" aria-describedby="test-setup"><div id="test-setup" className="space-y-3 text-sm text-ink-2"><p>Enable Test in the installation’s .env file, then restart B2B.</p><code className="block break-all rounded-lg bg-surface p-3 text-ink">B2B_ENABLE_ACCEPTANCE_UI=true</code><p>The setting enables the panel. Tests run only when you choose Run tests.</p></div></DialogContent></Dialog>
     </div>
   );
 }

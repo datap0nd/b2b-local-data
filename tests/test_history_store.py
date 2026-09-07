@@ -28,7 +28,8 @@ class HistoryTests(unittest.TestCase):
         self.store.append('alice',session,'won deals','Table (opportunity summary): 2 rows · filters: stage eq Won.',plan)
         self.store.append('alice',session,'and next year?','Which date field?')
         history,_=self.store.context('alice',session)
-        self.assertIn('"field":"stage"',history[1]['content']);self.assertTrue(history[1]['content'].startswith('Table (opportunity summary)'))
+        self.assertIn('"field":"stage"',history[1]['content']);self.assertIn('earlier or unavailable calculations',history[1]['content'])
+        self.assertNotIn('2 rows',history[1]['content'])
         self.assertEqual(history[3]['content'],'Which date field?')
     def test_new_session_has_no_query(self):
         self.assertEqual(self.store.context('alice',self.store.create('alice')),([],None))

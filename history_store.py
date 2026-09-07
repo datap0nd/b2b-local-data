@@ -15,7 +15,7 @@ import uuid
 import zlib
 
 from app_config import AppError
-from query_engine import parse_plan
+from query_engine import CALCULATION_VERSION, parse_plan
 
 SCHEMA_VERSION=3
 MAX_RESULT_BYTES=6_000_000   # compressed payload bound per saved answer
@@ -139,7 +139,13 @@ class HistoryStore:
         history=[]
         # The model sees each earlier answer together with the plan that produced it, so follow-ups refine real context.
         for turn in saved['turns'][-8:]:
-            answer=turn['response']+(('\nPlan: '+json.dumps(turn['plan'],separators=(',',':'))) if turn.get('plan') else '')
+            response=turn['response']
+            if turn.get('plan'):
+                result=self.load_result(owner,session,turn['id'])
+                version=((result or {}).get('table',{}).get('metadata') or {}).get('calculation_version')
+                if version!=CALCULATION_VERSION:
+                    response='This data answer used earlier or unavailable calculations. Its previous amounts and summary values must not be reused. Keep the user question and filters as context; ask for a current rerun before referring to its old total.'
+            answer=response+(('\nPlan: '+json.dumps(turn['plan'],separators=(',',':'))) if turn.get('plan') else '')
             history.extend([{'role':'user','content':turn['question']},{'role':'assistant','content':answer}])
         return history,parse_plan(saved['active_plan']) if saved['active_plan'] else None
 

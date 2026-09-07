@@ -1,4 +1,4 @@
-import type {AnswerPayload, AskResponse, Bootstrap, PresentationName, ResultResponse, SessionDetail, SessionSummary, TablePayload, ViewName, AnswerText} from './types';
+import type {AnswerPayload, AskResponse, Bootstrap, PresentationName, ResultResponse, SessionDetail, SessionSummary, TablePayload, ViewName, AnswerText, Freshness} from './types';
 
 export class ApiError extends Error { constructor(message: string, public status: number, public loginRequired = false) { super(message); } }
 
@@ -13,6 +13,7 @@ async function request<T>(path: string, body?: unknown, method?: string): Promis
 
 export const api = {
   bootstrap: () => request<Bootstrap>('/api/bootstrap'),
+  freshness: () => request<{freshness: Freshness | null}>('/api/freshness'),
   login: (name: string) => request<{name: string}>('/api/login', {name}),
   sessions: (q?: string) => request<{sessions: SessionSummary[]}>('/api/sessions' + (q ? `?q=${encodeURIComponent(q)}` : '')),
   newSession: () => request<{session_id: string}>('/api/sessions', {}),

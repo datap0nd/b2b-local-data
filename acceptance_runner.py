@@ -19,14 +19,14 @@ from acceptance_suite import BROWSER_CHECKS, STEPS, SUITE_VERSION, blocked_reaso
 from app_config import APP_VERSION, ROOT, AppError
 from data_layer import OPPORTUNITY_COLUMNS, RAW_COLUMNS, SKU_COLUMNS, SOURCE_FIELDS, build_canonical_views
 from history_store import HistoryStore
-from query_engine import result_digest
+from query_engine import CALCULATION_VERSION, result_digest
 from reference_evaluator import DIGEST_VERSION, EVALUATOR_VERSION, FINGERPRINT_FIELDS, FINGERPRINT_VERSION, ReferenceSource, compare, compare_grains, evaluate
 from reference_evaluator import OPPORTUNITY_COLUMNS as REFERENCE_OPPORTUNITY_COLUMNS, SKU_COLUMNS as REFERENCE_SKU_COLUMNS
 
 REPORT_VERSION = 'report-2'
 MAX_RUNS_LISTED = 50
 # Everything that must stay identical across the three qualifying runs.
-IDENTITY_KEYS = ('source_fingerprint', 'app_revision', 'suite_version', 'evaluator_version', 'digest_version', 'rules_digest', 'model_config', 'prompt_digest', 'effective_date')
+IDENTITY_KEYS = ('source_fingerprint', 'app_revision', 'suite_version', 'evaluator_version', 'digest_version', 'calculation_version', 'source_contract_verified', 'rules_digest', 'model_config', 'prompt_digest', 'effective_date')
 STEP_STATES = ('pass', 'fail', 'error', 'review', 'blocked', 'not_applicable', 'pending')
 EXECUTED_STATES = ('pass', 'fail', 'error', 'review')
 
@@ -187,7 +187,7 @@ class AcceptanceRunner:
             app_sku, app_opportunity = views.sku.to_dict('records'), views.opportunity.to_dict('records')
             run = {'id': run_id, 'owner': owner, 'status': 'running', 'started_at': now(), 'finished_at': None, 'scope': 'full', 'report_version': REPORT_VERSION,
                    'identity': {'app_version': APP_VERSION, 'app_revision': app_revision(), 'suite_version': SUITE_VERSION, 'evaluator_version': EVALUATOR_VERSION,
-                                'digest_version': DIGEST_VERSION, 'fingerprint_version': FINGERPRINT_VERSION, 'rules_digest': hashlib.sha256(self.settings.rules.encode()).hexdigest(),
+                                'digest_version': DIGEST_VERSION, 'calculation_version':CALCULATION_VERSION, 'source_contract_verified':source!='postgres' or self.settings.flag('B2B_SOURCE_CONTRACT_VERIFIED',False), 'fingerprint_version': FINGERPRINT_VERSION, 'rules_digest': hashlib.sha256(self.settings.rules.encode()).hexdigest(),
                                 'model_config': model_config(self.settings), 'prompt_digest': prompt_digest, 'effective_date': effective.isoformat(), 'source_fingerprint': summary['fingerprint']},
                    'snapshot': {'timestamp': now(), 'source': source, 'source_name': source_name, 'relation': relation,
                                 'raw_rows': summary['raw_rows'], 'excluded_rows': summary['excluded_rows'], 'opportunities': summary['opportunities'],
@@ -439,6 +439,8 @@ class AcceptanceRunner:
 
     def unqualified_reasons(self, run):
         reasons = []
+        if run['snapshot'].get('source')=='postgres' and not run.get('identity',{}).get('source_contract_verified',False):
+            reasons.append('live source amount/currency mapping and extraction grain have not been independently verified; confirm them before setting B2B_SOURCE_CONTRACT_VERIFIED=true')
         if not run['snapshot'].get('canonical_parity', False):
             reasons.append('canonical parity failed (application grains differ from the reference grains)')
         if run['scope'] != 'full':
@@ -630,7 +632,8 @@ class AcceptanceRunner:
                   '- Fingerprint field order: ' + ', '.join(FINGERPRINT_FIELDS) + '.',
                   f"- Result digest {DIGEST_VERSION}: for each complete result row, turn each cell into a typed token (n:<exact decimal without trailing zeros> for numbers, d:<ISO date> for dates, b:true/b:false for flags, s:<text> for text and identifiers, null for null), JSON-encode the tokens in result column order, SHA-256 each row, sort, SHA-256 the newline-joined list.",
                   '- Text is trimmed of spaces (empty becomes null); numbers must match `^[+-]?[0-9]+(\\.[0-9]+)?$`; probability accepts an optional `%` and is divided by 100; dates are day-first `D/M/YYYY` with one- or two-digit day and month, or ISO `YYYY-MM-DD` text from typed database columns, and must be valid calendar dates; invalid values become null.',
-                  '- Rows without opportunity number or product code are excluded. SKU rows sum quantity and amount_converted per opportunity/product; other columns use MIN (last_modified_date MAX). Opportunity rows sum SKU quantity and amount; parent amounts are compared with the 0.01 rule.',
+                  '- Rows without opportunity number or product code are excluded. SKU rows sum quantity and additive opp_amount_converted per opportunity/product. Repeated amount_converted is the independent exported opportunity total, retained once for comparison with the line sum using the 0.01 rule. Currency validity is checked before amount aggregation. Channel memberships are preserved; Multiple channels is an explicit group, not an arbitrary selection. Other conflicting metadata is explained in quality details.',
+                  '- Agreement with the reference calculator tests implementation, not source semantics. Live PostgreSQL qualification also requires independent verification of the amount/currency mapping and extraction grain (B2B_SOURCE_CONTRACT_VERIFIED).',
                   '- Stage groups: Won = Won, Rollout Started, Rollout Finished; Open = Identified, Qualified, Negotiation; Lost = Dropped, Lost.',
                   '- Filters apply after grain reduction; a product-level filter at opportunity grain selects whole opportunities. deal_size counts once per opportunity.', '',
                   'CSV header mapping (canonical field ← SQL column ← accepted export headers), generated from the data specification:', '',

@@ -1,7 +1,7 @@
 {
-  "app_version": "0.6.0",
+  "app_version": "0.7.0",
   "query_plan_version": 1,
-  "data_schema_version": 2,
+  "data_schema_version": 3,
   "python_tag": "cp313",
   "platform": "win_amd64",
   "dependency_lock_sha256": "198de1854427dbe9e2cc46e07108ec2ea6948402e6363d38cefea6a677a3ee2e",

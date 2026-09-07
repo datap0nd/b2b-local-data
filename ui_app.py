@@ -27,7 +27,7 @@ from answer_text import compose_answer, default_suggestions
 from app_config import APP_VERSION, ROOT, AppError, verify_release
 from data_layer import DataRepository
 from history_store import HistoryStore
-from query_engine import PlannerClient, QueryExecutor, parse_plan
+from query_engine import CALCULATION_VERSION, PlannerClient, QueryExecutor, parse_plan
 from query_service import QueryService
 
 DIST = ROOT / 'web/dist'
@@ -199,7 +199,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     app.state.snapshots=Snapshots(repository or DataRepository(settings),settings.number('B2B_CACHE_SECONDS',60,low=0,high=3600))
     app.state.executor=QueryExecutor()
     app.state.service=QueryService(app.state.planner,app.state.executor)
-    acceptance_ui=settings.flag('B2B_ENABLE_ACCEPTANCE_UI',False)
+    acceptance_ui=settings.flag('B2B_ENABLE_ACCEPTANCE_UI',True)
     app.state.acceptance=AcceptanceRunner(settings,app.state.snapshots.repository,app.state.service,settings.data_dir) if acceptance_ui else None
     lane=app.state.service.lane
     secret=cookie_secret(settings)
@@ -306,6 +306,12 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
                 'cache_seconds':app.state.snapshots.seconds,'snapshot_at':app.state.snapshots.loaded_at,'acceptance_ui':acceptance_ui,
                 'qualification':app.state.acceptance.qualification(request.state.owner) if app.state.acceptance and request.state.owner else None}
 
+    @app.get('/api/freshness')
+    def freshness(request:Request):
+        """Verified time of the current cached dataset, never an answer or app-load time."""
+        views,_=app.state.snapshots.get()
+        return {'freshness':getattr(views,'freshness',None) or {'status':'unavailable','updated_at':None,'reason':'No verified data-update time is available for this source.'}}
+
     # ----- conversations and saved answers -----
     @app.get('/api/sessions')
     def sessions(request:Request,q:str|None=None): return {'sessions':app.state.store.list(request.state.owner,(q or '')[:100] or None)}
@@ -333,6 +339,8 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         if saved is None:
             turn=app.state.store.turn(request.state.owner,session_id,turn_id)
             return {'available':False,'turn_id':turn_id,'kind':turn['kind'],'can_rerun':bool(turn['plan']),'message':'This answer predates saved results. Run with current data to get a new, dated answer.'}
+        if (saved.get('table',{}).get('metadata') or {}).get('calculation_version')!=CALCULATION_VERSION:
+            return {'available':False,'turn_id':turn_id,'kind':'data','can_rerun':True,'message':'This answer used earlier amount and summary calculations. Run with current data for a corrected answer. The original record is preserved.'}
         return {'available':True,'turn_id':turn_id,'session_id':session_id,'suggestions':default_suggestions(saved['table'])}|saved
 
     @app.post('/api/sessions/{session_id}/turns/{turn_id}/actions')
@@ -340,6 +348,8 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         """Deterministic view changes on a saved answer: Summary/Detailed or table/chart/cards presentation. No SQL, no model."""
         saved=app.state.store.load_result(request.state.owner,session_id,turn_id)
         if saved is None: raise AppError('This answer has no saved result to switch. Run with current data first.')
+        if (saved.get('table',{}).get('metadata') or {}).get('calculation_version')!=CALCULATION_VERSION:
+            raise AppError('This answer used earlier calculations. Run with current data before exploring its results.')
         table=saved['table']
         if payload.action=='view':
             if payload.view is None: raise AppError('Choose summary or detail.')

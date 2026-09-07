@@ -53,6 +53,7 @@ def attach_freshness(table,views,snapshot_at):
     metadata=table.setdefault('metadata',{})
     metadata['freshness']=dict(getattr(views,'freshness',None) or {'status':'unavailable','reason':'No verified update time for this source.'})
     metadata['fingerprint']=getattr(views,'fingerprint',None)
+    metadata['data_contract_version']=getattr(views,'data_contract_version',None)
     metadata['loaded_at']=snapshot_at
     table['snapshot_at']=snapshot_at
     return table

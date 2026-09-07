@@ -22,7 +22,7 @@ def refresh(root=ROOT):
     write_json(root/'portable_assets.lock.json',{'format':1,'release_tag':tag,
         'dependency_lock_sha256':digest(root/'dependencies.lock.json'),'runtime_lock_sha256':digest(root/'runtime.lock.json')})
     write_json(root/'release_manifest.json',{'app_version':(root/'VERSION').read_text().strip(),
-        'query_plan_version':1,'data_schema_version':2,'python_tag':'cp313','platform':'win_amd64',
+        'query_plan_version':1,'data_schema_version':3,'python_tag':'cp313','platform':'win_amd64',
         'dependency_lock_sha256':digest(root/'dependencies.lock.json'),'runtime_lock_sha256':digest(root/'runtime.lock.json'),
         'portable_assets_lock_sha256':digest(root/'portable_assets.lock.json'),
         'dependencies':{item['name'].lower().replace('_','-'):item['version'] for item in packages}})

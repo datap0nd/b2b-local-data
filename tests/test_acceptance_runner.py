@@ -36,7 +36,7 @@ class RunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.home = Path(self.temp.name)
         self.records = synthetic_records(); self.witnesses = witnesses_for(self.records)
-        self.settings = Settings(self.home, {'DB_KIND': 'postgres', 'PGURL': 'db.example:5432/postgres', 'RO_SQL_PW': 'top-secret-password', 'LLM_API_KEY': 'model-secret-key',
+        self.settings = Settings(self.home, {'DB_KIND': 'postgres', 'B2B_SOURCE_CONTRACT_VERIFIED':'true', 'PGURL': 'db.example:5432/postgres', 'RO_SQL_PW': 'top-secret-password', 'LLM_API_KEY': 'model-secret-key',
                                              'LLM_MODEL_NAME': 'qwen-test', 'LLM_API_URL': 'http://127.0.0.1:4002/v1/chat/completions'}, rules='- local rule')
         self.repository = FrameRepository(self.records)
     def tearDown(self): self.temp.cleanup()
@@ -166,7 +166,7 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('Blocked coverage', runner.report('alice', run_id))
     def test_markdown_escaping_and_manifest(self):
         self.assertEqual(md('a|b`c\nd'), 'a\\|b\\`c d')
-        m = manifest(); self.assertEqual(len(m['steps']), len(STEPS)); self.assertEqual(len(m['browser_checks']), 16); self.assertEqual(m['suite_version'], '2.0.0')
+        m = manifest(); self.assertEqual(len(m['steps']), len(STEPS)); self.assertEqual(len(m['browser_checks']), 16); self.assertEqual(m['suite_version'], '3.0.0')
         self.records[0]['end_customer'] = 'Pipe | Customer'; self.repository = FrameRepository(self.records)
         runner, _ = self.runner(ScriptedPlanner(witnesses_for(self.records)))
         run_id = self.drive(runner, browser=None, stop_after=2)
