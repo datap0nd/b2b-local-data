@@ -2,7 +2,7 @@
 // importing the application's formatting code, so a defect in the renderer cannot hide inside its own helpers.
 import type {Cell, TablePayload} from '@/types';
 
-export const LABELS: Record<string, string> = {opportunity_no: 'Opportunity no.', opportunity_name: 'Opportunity', end_customer: 'Customer', opportunity_owner: 'Owner', stage: 'Stage', stage_group: 'Stage group', close_date: 'Close date', close_month: 'Close month',
+export const LABELS: Record<string, string> = {opportunity_no: 'Opportunity no.', opportunity_name: 'Opportunity', end_customer: 'Customer', opportunity_owner: 'Owner', stage: 'Stage', stage_group: 'Opportunity status', close_date: 'Close date', close_month: 'Closing month',
   created_date: 'Created', last_modified_date: 'Last modified', product_code: 'Product code', pet_name: 'Product', product_codes: 'Product codes', product_names: 'Product names', quantity: 'Quantity', opportunity_amount: 'Amount', sku_amount: 'Amount', amount: 'Amount',
   deal_size: 'Deal size (USD)', sku_count: 'Product count', opportunity_count: 'Opportunity count', opp_amount_converted_currency: 'Currency', amount_converted_currency: 'Currency', has_amount_discrepancy: 'Amount check', has_quality_warning: 'Data quality', probability: 'Probability',
   type: 'Type', first_channel: 'First channel', comment: 'Comment', age: 'Age', subsidiary_subsidiary_code: 'Subsidiary', gscm_product_group_new: 'Product group', biz_focus: 'Business focus', business_location: 'Location', division: 'Division', sales_type_detail: 'Sales type',
@@ -68,11 +68,16 @@ export function expectedRowText(t: TablePayload, visible: string[], row: Record<
 export function measureText(t: TablePayload, m: string, v: Cell): string { if (v == null) return '—'; const s = fmtNumber(v, MONEY.has(m) ? 2 : null); const cur = m === 'deal_size' ? 'USD' : MONEY.has(m) ? currency(t) : null; return cur && cur !== 'mixed' ? `${s} ${cur}` : s; }
 export function axisLabel(t: TablePayload, dimension: string, v: Cell): string { if (v == null) return 'Unknown'; return t.column_types[dimension] === 'date' ? fmtDate(v, dimension === 'close_month') : String(v); }
 export function csvExpected(t: TablePayload, rows: Record<string, Cell>[]): string {
-  const quote = (v: Cell) => { let s = v == null ? '' : String(v); if (/^[\s]*[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replaceAll('"', '""') + '"'; };
-  return '﻿' + [t.columns.map(quote).join(','), ...rows.map(r => t.columns.map(c => quote(r[c])).join(','))].join('\r\n');
+  const quote = (v: Cell, type = 'text') => { let s = v == null ? '' : String(v); const numeric = type === 'number' && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(s); if (!numeric && /^[\s]*[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replaceAll('"', '""') + '"'; };
+  return '﻿' + [t.columns.map(column => quote(column)).join(','), ...rows.map(r => t.columns.map(c => quote(r[c], t.column_types[c])).join(','))].join('\r\n');
 }
 export const OPS: Record<string, string> = {eq: 'is', ne: 'is not', gt: 'more than', ge: 'at least', lt: 'less than', le: 'at most', contains: 'contains', in: 'is one of', between: 'between'};
 export function expectedChip(t: TablePayload, f: {field: string; operator: string; value: Cell | Cell[]}): string {
+  if (f.field === 'stage_group' && f.operator === 'eq') return String(f.value) + ' opportunities';
+  if (['close_date', 'close_month', 'created_date'].includes(f.field) && f.operator === 'between' && Array.isArray(f.value)) {
+    const start = String(f.value[0]), end = String(f.value[1]);
+    if (start.endsWith('-01-01') && end === start.slice(0, 4) + '-12-31') return (f.field === 'created_date' ? 'Created' : 'Closing') + ' in ' + start.slice(0, 4);
+  }
   const type = t.column_types[f.field] ?? (MONEY.has(f.field) || f.field === 'quantity' ? 'number' : /date|month/.test(f.field) ? 'date' : /^has_/.test(f.field) ? 'bool' : 'text');
   const one = (v: Cell) => v == null ? 'empty' : type === 'date' ? fmtDate(v, f.field === 'close_month') : type === 'number' ? (f.field === 'probability' ? fmtPercent(v) : fmtNumber(v, null)) : type === 'bool' ? (v ? 'yes' : 'no') : String(v);
   const value = Array.isArray(f.value) ? f.value.map(one).join(f.operator === 'between' ? ' and ' : ', ') : one(f.value);

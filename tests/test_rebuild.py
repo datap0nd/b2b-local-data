@@ -216,11 +216,13 @@ class ViewConservationAndCurrencyTests(unittest.TestCase):
         by_currency = table['metadata']['complete']['by_currency']
         self.assertEqual(set(by_currency), {'EUR', 'USD'}); self.assertEqual(by_currency['USD']['opportunities'], 1)
         answer = compose_answer(table)
-        self.assertIn(' and ', answer['sentence']); self.assertIn('USD', answer['sentence'])
-        self.assertFalse(any(m['label'] == 'Total amount' for m in answer['metrics'])); self.assertTrue(any(m['label'] == 'Amount by currency' for m in answer['metrics']))
+        self.assertEqual(answer['metrics'], [])
+        self.assertEqual(answer['sentence'], '')
+        self.assertTrue(all(v['amount'] is not None for v in by_currency.values()))
         single = QueryExecutor().execute(views, parse_plan({'result_kind': 'rows', 'grain': 'opportunity', 'filters': [{'field': 'opportunity_owner', 'operator': 'eq', 'value': 'Ann Ahl'}]}))
         self.assertEqual(single['metadata']['currency']['code'], 'EUR')
-        self.assertTrue(any(m['label'] == 'Total amount' and m['value'].endswith(' EUR') for m in compose_answer(single)['metrics']))
+        self.assertEqual(compose_answer(single)['metrics'], [])
+        self.assertEqual(set(single['metadata']['complete']['by_currency']), {'EUR'})
 
     def test_answer_text_uses_readable_group_labels_and_deterministic_suggestions(self):
         self.assertEqual(display('close_month', '2024-01-01'), 'Jan 2024'); self.assertEqual(display('close_date', '2026-02-02'), '2 Feb 2026'); self.assertEqual(display('stage', None), 'Unknown')
@@ -228,7 +230,7 @@ class ViewConservationAndCurrencyTests(unittest.TestCase):
         chart = QueryExecutor().execute(views, parse_plan({'result_kind': 'aggregate', 'presentation': 'chart', 'chart_type': 'line', 'group_by': ['close_month'], 'measures': ['amount']}))
         answer = compose_answer(chart)
         self.assertRegex(answer['sentence'], r'Largest amount: [A-Z][a-z]{2} \d{4} with')
-        self.assertEqual(default_suggestions(chart), ['Show the opportunities behind that result', 'Show the same values by stage group', 'Show those values as a table'])
+        self.assertEqual(default_suggestions(chart), ['Show the same values by owner', 'Show the same values by opportunity status', 'Show those values as a table'])
         rows = QueryExecutor().execute(views, parse_plan({'result_kind': 'rows', 'grain': 'opportunity', 'filters': [{'field': 'stage', 'operator': 'eq', 'value': 'Won'}]}))
         self.assertEqual(default_suggestions(rows)[-1], 'Remove the stage restriction')
         total = QueryExecutor().execute(views, parse_plan({'result_kind': 'aggregate', 'presentation': 'cards', 'measures': ['amount']}))

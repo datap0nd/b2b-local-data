@@ -3,8 +3,9 @@ import {MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Search, Tra
 import {Button} from './ui/button';
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger} from './ui/dropdown-menu';
 import {Hint} from './ui/tooltip';
+import {Freshness} from './Freshness';
 import {cn} from '@/lib/utils';
-import type {SessionSummary} from '@/types';
+import type {Freshness as FreshnessInfo, SessionSummary} from '@/types';
 
 interface Props {
   sessions: SessionSummary[];
@@ -19,6 +20,7 @@ interface Props {
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   devEntry?: React.ReactNode;
+  freshness?: FreshnessInfo | null;
 }
 
 function groupLabel(iso: string): string {
@@ -29,7 +31,7 @@ function groupLabel(iso: string): string {
   return new Intl.DateTimeFormat(undefined, {month: 'long', year: 'numeric'}).format(date);
 }
 
-export function Sidebar({sessions, currentId, collapsed, overlay, open, onToggle, onClose, onNew, onSelect, onRename, onDelete, devEntry}: Props) {
+export function Sidebar({sessions, currentId, collapsed, overlay, open, onToggle, onClose, onNew, onSelect, onRename, onDelete, devEntry, freshness}: Props) {
   const [query, setQuery] = useState('');
   const [renaming, setRenaming] = useState<{id: string; title: string} | null>(null);
   const groups = useMemo(() => {
@@ -43,13 +45,16 @@ export function Sidebar({sessions, currentId, collapsed, overlay, open, onToggle
   const rail = collapsed && !overlay;
   return (
     <>
-      {overlay && open && <div className="fixed inset-0 z-30 bg-ink/30 md:hidden" onClick={onClose} aria-hidden="true" />}
+      {overlay && open && <div className="fixed inset-0 z-30 bg-ink/30" onClick={onClose} aria-hidden="true" />}
       <aside
         aria-label="Conversation history"
+        inert={overlay && !open}
+        aria-hidden={overlay && !open}
+        data-rail={rail}
         className={cn('flex h-full flex-col border-r border-line bg-surface transition-[width,transform] duration-200',
-          overlay ? cn('fixed inset-y-0 left-0 z-40 w-[248px]', open ? 'translate-x-0' : '-translate-x-full') : rail ? 'w-[52px]' : 'w-[248px]')}>
+          overlay ? cn('fixed inset-y-0 left-0 z-40 w-[248px]', open ? 'visible translate-x-0' : 'invisible -translate-x-full') : rail ? 'w-[52px]' : 'w-[248px]')}>
         <div className={cn('flex items-center gap-2 px-3 py-3', rail && 'flex-col px-1.5')}>
-          {!rail && <span className="flex items-center gap-2 px-1 text-[15px] font-semibold"><span className="grid size-6 place-items-center rounded-md bg-ink text-xs text-white">b</span>B2B</span>}
+          <span className={cn('flex items-center text-[15px] font-semibold tracking-tight', rail && 'flex-col')}><span className={cn('text-accent', rail ? 'text-xs' : 'pl-1')}>B2B</span><Freshness freshness={freshness} /></span>
           <div className={cn('ml-auto flex items-center gap-1', rail && 'ml-0 flex-col')}>
             <Hint text={rail ? 'Show history' : 'Hide history'}><Button variant="ghost" size="icon-sm" onClick={overlay ? onClose : onToggle} aria-label={rail ? 'Show history' : 'Hide history'} aria-expanded={!rail}>{rail ? <PanelLeftOpen /> : <PanelLeftClose />}</Button></Hint>
             <Hint text="New chat"><Button variant="ghost" size="icon-sm" onClick={onNew} aria-label="New chat"><Plus /></Button></Hint>
@@ -100,9 +105,9 @@ export function Sidebar({sessions, currentId, collapsed, overlay, open, onToggle
                 </div>
               ))}
             </nav>
-            {devEntry && <div className="border-t border-line px-3 py-2">{devEntry}</div>}
           </>
         )}
+        {devEntry && <div className={cn('mt-auto border-t border-line py-3', rail ? 'px-1' : 'px-3')}>{devEntry}</div>}
       </aside>
     </>
   );

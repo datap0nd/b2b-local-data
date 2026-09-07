@@ -11,10 +11,10 @@ import sysconfig
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = '0.6.0'
+APP_VERSION = '0.7.0'
 PLAN_VERSION = 1
 # Version of the app's canonical data schema (the 30 raw Salesforce columns and their derived grains).
-DATA_SCHEMA_VERSION = 2
+DATA_SCHEMA_VERSION = 3
 
 
 class AppError(Exception):
@@ -115,7 +115,13 @@ class Settings:
         rules_path = home / 'business_rules.md'
         if rules_path.exists():
             local_rules = rules_path.read_text(encoding='utf-8-sig')
-            if local_rules.strip() and local_rules.strip() != rules.strip():
+            from scripts.install_config import known_shipped_rules
+            obsolete_default=known_shipped_rules(rules_path.read_bytes())
+            if local_rules.strip() and local_rules.strip() != rules.strip() and not obsolete_default:
+                legacy_patterns=(r'sku_amount\s*=\s*sum\s*\(\s*amount_converted\s*\)',r'(?<!opp_)\bamount_converted\s+(?:is|as|means)\s+(?:the\s+)?(?:sku|line|product)\s+amount',r'opp_amount_converted\s+(?:is|as|means)\s+(?:the\s+)?(?:exported\s+)?(?:parent|opportunity)\s+(?:total|amount)')
+                assertions='\n'.join(line for line in local_rules.replace('`','').replace('**','').splitlines() if not re.search(r"\b(?:not|never|don\x27t)\b",line,re.I))
+                if any(re.search(pattern,assertions,re.I) for pattern in legacy_patterns):
+                    raise AppError('business_rules.md contains the earlier amount-field mapping. Update that local rule: Amount (converted) is the repeated opportunity total and Opp Amount (converted) is the additive source-line amount. Your file has not been changed.')
                 rules = rules.rstrip() + '\n\n# Local supplements\n' + local_rules
         settings = cls(home, values, rules)
         settings.sources = sources

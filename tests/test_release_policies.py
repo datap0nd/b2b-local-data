@@ -20,7 +20,7 @@ class ReleaseTests(unittest.TestCase):
     def test_supplied_manifest_matches_contract_and_lock(self):verify_release(self.root,False)
     def test_changed_release_values_block_launch(self):
         original=json.loads((self.root/'release_manifest.json').read_text())
-        for key,value in [('app_version','other'),('data_schema_version',1),('query_plan_version',2),('python_tag','cp312'),('platform','win_arm64')]:
+        for key,value in [('app_version','other'),('data_schema_version',2),('query_plan_version',2),('python_tag','cp312'),('platform','win_arm64')]:
             with self.subTest(key=key):
                 (self.root/'release_manifest.json').write_text(json.dumps(original|{key:value}))
                 with self.assertRaises(AppError):verify_release(self.root,False)
@@ -48,6 +48,29 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict('os.environ',{},clear=True):self.assertEqual(Settings.load(self.root).get('DG_GITHUB_TOKEN'),'abc')
         (self.root/'.env').write_text('1BAD=x\n')
         with self.assertRaises(AppError):read_env(self.root/'.env')
+    def test_acceptance_ui_default_file_case_and_environment_precedence(self):
+        for content, environment, expected in (
+            ('', {}, 'true'),
+            ('# B2B_ENABLE_ACCEPTANCE_UI=false\n', {}, 'true'),
+            ('B2B_ENABLE_ACCEPTANCE_UI=true\n', {}, 'true'),
+            ('b2b_enable_acceptance_ui=false\n', {}, 'false'),
+            ('B2B_ENABLE_ACCEPTANCE_UI=false\n', {'B2B_ENABLE_ACCEPTANCE_UI':'true'}, 'true'),
+            ('B2B_ENABLE_ACCEPTANCE_UI=true\n', {'b2b_enable_acceptance_ui':'false'}, 'false'),
+        ):
+            with self.subTest(content=content, environment=environment):
+                (self.root/'.env').write_text(content)
+                with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)
+                self.assertEqual(settings.get('B2B_ENABLE_ACCEPTANCE_UI'),expected)
+    def test_custom_legacy_amount_rules_are_flagged_even_in_markdown(self):
+        for rule in ('`amount_converted` is the line amount.',
+                     '`opp_amount_converted` is the opportunity total.',
+                     '**AMOUNT_CONVERTED** is the SKU amount.'):
+            with self.subTest(rule=rule):
+                rules=self.root/'business_rules.md'
+                rules.write_text(rule,encoding='utf-8')
+                original=rules.read_bytes()
+                with patch.dict('os.environ',{},clear=True),self.assertRaises(AppError):Settings.load(self.root)
+                self.assertEqual(rules.read_bytes(),original)
     def test_data_governance_variables_configure_database_and_model(self):
         environment={'PGHOST':'db.internal','PGUSER':'reader','PGPASSWORD':'pw','DG_AI_API_URL':'http://10.20.30.40:8000/v1','DG_AI_API_KEY':'k','DG_AI_MODEL':'Qwen/Qwen3.8-27B'}
         with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)
@@ -98,9 +121,9 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict('os.environ',{'AI_MODEL':'environment-alias'},clear=True):self.assertEqual(Settings.load(self.root).get('LLM_MODEL_NAME'),'environment-alias')
     def test_manifest_describes_canonical_data_schema(self):
         manifest=json.loads((self.root/'release_manifest.json').read_text())
-        self.assertEqual(manifest['app_version'],'0.6.0');self.assertEqual(manifest['data_schema_version'],2)
+        self.assertEqual(manifest['app_version'],'0.7.0');self.assertEqual(manifest['data_schema_version'],3)
         self.assertNotIn('database_schema_version',manifest)
-        self.assertEqual((ROOT/'VERSION').read_text().strip(),'0.6.0')
+        self.assertEqual((ROOT/'VERSION').read_text().strip(),'0.7.0')
     def test_csv_source_configuration(self):
         (self.root/'.env').write_text('DB_KIND=csv\nB2B_CSV_PATH=exports/salesforce.csv\n')
         with patch.dict('os.environ',{},clear=True):settings=Settings.load(self.root)

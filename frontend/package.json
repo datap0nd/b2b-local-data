@@ -1,7 +1,7 @@
 {
   "name": "b2b-frontend",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "description": "Conversational analysis frontend for B2B Local Data. Built assets are committed to ../web/dist with a source fingerprint; end users never need Node.",
   "scripts": {

@@ -1,3 +1,7 @@
+-- HISTORICAL ONLY: these amount formulas predate salesforce-lines-v2 and are not
+-- correct for the September 2026 CSV contract. Do not apply this migration for
+-- current monetary calculations or use it as an acceptance oracle. See
+-- docs/data-contract.md for current mapping, currency, and membership semantics.
 -- LEGACY DOCUMENTATION (versions 0.2-0.3). Since 0.4.0 the application reads the raw table
 -- directly and builds both grains with its own parser, which also covers the four columns added
 -- later (1st_channel, age, comment, deal_size_on_pricing_date_usd). Nothing reads these views or

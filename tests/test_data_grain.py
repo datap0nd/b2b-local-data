@@ -45,15 +45,15 @@ class DataGrainTests(unittest.TestCase):
         for parent,expected in [('749.99',False),('750.01',False),('749.989',True),('750.011',True)]:
             with self.subTest(parent=parent):
                 rows=demo_rows()[:3]
-                for row in rows:row['opp_amount_converted']=parent
+                for row in rows:row['amount_converted']=parent
                 self.assertEqual(build_canonical_views(rows).opportunity.iloc[0].has_amount_discrepancy,expected)
 
     def test_parent_min_max_conflict_and_missing_parent_warn(self):
-        rows=demo_rows()[:3];rows[0]['opp_amount_converted']='751'
+        rows=demo_rows()[:3];rows[0]['amount_converted']='751'
         views=build_canonical_views(rows)
         self.assertEqual(views.sku.iloc[0].exported_opp_amount_value_count,2)
         self.assertTrue(views.opportunity.iloc[0].has_amount_discrepancy)
-        for row in rows: row['opp_amount_converted']=None
+        for row in rows: row['amount_converted']=None
         self.assertTrue(build_canonical_views(rows).opportunity.iloc[0].has_amount_discrepancy)
 
     def test_numeric_and_probability_normalization(self):
@@ -65,9 +65,9 @@ class DataGrainTests(unittest.TestCase):
             self.assertIsNone(clean_number(value))
 
     def test_sql_sum_null_semantics(self):
-        rows=demo_rows()[:2];rows[0]['amount_converted']='invalid'
+        rows=demo_rows()[:2];rows[0]['opp_amount_converted']='invalid'
         self.assertEqual(build_canonical_views(rows).sku.iloc[0].sku_amount,Decimal(200))
-        rows[1]['amount_converted']=None
+        rows[1]['opp_amount_converted']=None
         self.assertIsNone(build_canonical_views(rows).sku.iloc[0].sku_amount)
 
     def test_dates_are_valid_day_first_calendar_dates(self):

@@ -3,7 +3,7 @@ import codecs
 import csv
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -15,6 +15,18 @@ from sqlalchemy import URL, create_engine, text
 
 from app_config import AppError
 
+# Explicit adapter contract. Header names are provenance, not business definitions.
+# The September 2026 CSV export supports this mapping; live SQL field semantics
+# still require source-owner verification. Both adapters apply one version, never
+# query-by-query inference. See docs/data-contract.md.
+DATA_CONTRACT_VERSION = 'salesforce-lines-v2'
+SOURCE_BUSINESS_FIELDS = {
+    'source_line_amount': 'opp_amount_converted',
+    'source_line_currency': 'opp_amount_converted_currency',
+    'source_opportunity_total': 'amount_converted',
+    'source_opportunity_currency': 'amount_converted_currency',
+    'source_deal_size_usd': 'deal_size_on_pricing_date_usd',
+}
 # The canonical data schema: every raw Salesforce column, its exact PostgreSQL column name, and its parser.
 # Canonical field names are lower snake_case identifiers starting with a letter. The SQL column name is
 # identical unless it is not a valid identifier, in which case the manual alias below applies.
@@ -66,14 +78,13 @@ HEADER_ALIASES = {
 }
 TEXT_FIELDS = [name for name, kind in FIELD_KINDS.items() if kind == 'text']
 DATE_FIELDS = [name for name, kind in FIELD_KINDS.items() if kind == 'date']
-# Added attributes describe the opportunity; they are selected deterministically, never summed.
+# Added attributes describe the opportunity; they are never summed. Multiple
+# channel memberships are preserved and explicitly displayed as ambiguous.
 OPPORTUNITY_ATTRIBUTES = ['first_channel', 'age', 'comment', 'deal_size_on_pricing_date_usd']
 ATTRIBUTE_NUMBERS = ['age', 'deal_size_on_pricing_date_usd']
 SKU_METADATA = [f for f in TEXT_FIELDS if f not in ('opportunity_no', 'product_code')]
 SKU_ONLY_METADATA = ('gscm_product_group_new', 'pet_name', 'amount_converted_currency')
 OPPORTUNITY_METADATA = [f for f in SKU_METADATA if f not in SKU_ONLY_METADATA]
-QUALITY_FIELDS = ['exported_opp_amount', 'opportunity_name', 'end_customer', 'pet_name', 'gscm_product_group_new',
-                  'stage', 'opportunity_owner', 'amount_converted_currency'] + OPPORTUNITY_ATTRIBUTES
 SKU_COLUMNS = ['opportunity_no', 'product_code'] + SKU_METADATA + ['quantity', 'sku_amount', 'exported_opp_amount_min',
     'exported_opp_amount_max', 'exported_opp_amount_value_count', 'probability'] + ATTRIBUTE_NUMBERS + DATE_FIELDS + ['source_row_count', 'has_quality_warning']
 OPPORTUNITY_COLUMNS = ['opportunity_no'] + OPPORTUNITY_METADATA + ['probability'] + ATTRIBUTE_NUMBERS + DATE_FIELDS + ['quantity', 'opportunity_amount',
@@ -187,6 +198,8 @@ class CanonicalViews:
     # Verified data-update time of the snapshot (see freshness_of) and the fingerprint of its raw rows.
     freshness: dict | None = None
     fingerprint: str | None = None
+    data_contract_version: str = DATA_CONTRACT_VERSION
+    quality_details: dict = field(default_factory=lambda: {'opportunity': {}, 'opportunity_sku': {}})
 
 
 FINGERPRINT_FIELDS = ['opportunity_no', 'product_code', 'subsidiary_subsidiary_code', 'opportunity_name', 'end_customer', 'gscm_product_group_new',
@@ -260,7 +273,12 @@ def build_canonical_views(raw):
             excluded += 1
             continue
         row.update({name: PARSERS[FIELD_KINDS[name]](source[name]) for name in RAW_COLUMNS if FIELD_KINDS[name] != 'text'})
-        row['exported_opp_amount'] = row.pop('opp_amount_converted')
+        row.update({business: row[source_field] for business, source_field in SOURCE_BUSINESS_FIELDS.items()})
+        row['exported_opp_amount'] = row['source_opportunity_total']
+        # Keep the established public currency columns attached to their canonical
+        # measures. Original source currencies remain independently available.
+        row['amount_converted_currency'] = row['source_line_currency']
+        row['opp_amount_converted_currency'] = row['source_line_currency']
         normalized.append(row)
     # Reduce record groups before constructing DataFrames. Creating one Series per
     # field per group dominates runtime for tens of thousands of small groups.
@@ -268,45 +286,124 @@ def build_canonical_views(raw):
     for row in normalized:
         by_sku.setdefault((row['opportunity_no'], row['product_code']), []).append(row)
     sku_rows = []
+    quality = {'opportunity': {}, 'opportunity_sku': {}}
+    # These are internal evidence columns, deliberately excluded from the planner's
+    # public field allowlist. Tuples preserve every membership, including null currency.
+    evidence_columns = ['first_channel_values', 'amount_currency_values', 'has_invalid_amount_currency', 'has_missing_line_amount', 'exported_opp_amount_currency']
+
+    def unique(values, include_null=False):
+        return tuple(sorted(set(values if include_null else present(values)), key=lambda item: (item is None, str(item))))
+
+    def currency(values):
+        codes = unique(values, include_null=True)
+        invalid = len(codes) != 1 or codes[0] is None
+        return codes, invalid, None if invalid else codes[0]
+
+    def reasons(group, fields):
+        issues = []
+        for name in dict.fromkeys(fields):
+            vals = unique([item[name] for item in group])
+            if len(vals) > 1:
+                issues.append({'code': 'channel_conflict' if name == 'first_channel' else 'metadata_conflict', 'field': name,
+                               'message': ('Multiple channel memberships; no single channel is selected.' if name == 'first_channel'
+                                           else f'Source rows disagree on {name.replace("_", " ")}.'), 'values': list(vals)})
+        for name, label in [('source_line_amount', 'line amount'), ('source_opportunity_total', 'exported opportunity total')]:
+            missing_count = sum(item[name] is None for item in group)
+            if missing_count:
+                issues.append({'code': 'missing_amount', 'field': name, 'message': f'{missing_count} source row(s) have a missing or invalid {label}.'})
+        parents = unique([item['source_opportunity_total'] for item in group])
+        if len(parents) > 1:
+            issues.append({'code': 'conflicting_parent_amount', 'field': 'source_opportunity_total',
+                           'message': 'The repeated exported opportunity total differs between source rows.', 'values': list(parents)})
+        for name, label in [('source_line_currency', 'line amounts'), ('source_opportunity_currency', 'exported opportunity totals')]:
+            codes, invalid, _ = currency([item[name] for item in group])
+            if invalid:
+                issues.append({'code': 'currency_issue', 'field': name, 'message': f'Mixed or missing currency for {label}; no cross-currency sum or comparison is valid.',
+                               'values': list(codes)})
+        return issues
+
+    def evidence(row, group):
+        channels = unique([item['first_channel'] for item in group])
+        codes, invalid, code = currency([item['source_line_currency'] for item in group])
+        _, _, parent_code = currency([item['source_opportunity_currency'] for item in group])
+        row.update(first_channel='Multiple channels' if len(channels) > 1 else (channels[0] if channels else None),
+                   first_channel_values=channels, amount_currency_values=codes, has_invalid_amount_currency=invalid,
+                   has_missing_line_amount=any(item['source_line_amount'] is None for item in group),
+                   exported_opp_amount_currency=parent_code, amount_converted_currency=code, opp_amount_converted_currency=code)
+        return invalid
+
+    sku_conflicts = [name for name in SKU_METADATA + ATTRIBUTE_NUMBERS + DATE_FIELDS + ['probability']
+                     if name not in ('amount_converted_currency', 'opp_amount_converted_currency', 'last_modified_date')]
     for (opportunity, product), group in sorted(by_sku.items()):
         values = {name: [row[name] for row in group] for name in group[0]}
         row = {'opportunity_no': opportunity, 'product_code': product}
         row.update({name: sql_min(values[name]) for name in SKU_METADATA + ATTRIBUTE_NUMBERS})
         row.update({name: (sql_max if name == 'last_modified_date' else sql_min)(values[name]) for name in DATE_FIELDS})
-        row.update(quantity=sql_sum(values['quantity']), sku_amount=sql_sum(values['amount_converted']),
+        invalid_currency = evidence(row, group)
+        issues = reasons(group, sku_conflicts)
+        row.update(quantity=sql_sum(values['quantity']), sku_amount=None if invalid_currency else sql_sum(values['source_line_amount']),
                    exported_opp_amount_min=sql_min(values['exported_opp_amount']), exported_opp_amount_max=sql_max(values['exported_opp_amount']),
                    exported_opp_amount_value_count=len(set(present(values['exported_opp_amount']))), probability=sql_min(values['probability']),
-                   source_row_count=len(group), has_quality_warning=any(conflicting(values[name]) for name in QUALITY_FIELDS))
+                   source_row_count=len(group), has_quality_warning=bool(issues))
+        if issues:
+            quality['opportunity_sku'][(opportunity, product)] = issues
         sku_rows.append(row)
-    sku = pd.DataFrame(sku_rows, columns=SKU_COLUMNS, dtype=object)
+    sku = pd.DataFrame(sku_rows, columns=SKU_COLUMNS + evidence_columns, dtype=object)
     by_opportunity = {}
     for row in sku_rows:
         by_opportunity.setdefault(row['opportunity_no'], []).append(row)
     opportunity_rows = []
+    raw_by_opportunity = {}
+    for row in normalized:
+        raw_by_opportunity.setdefault(row['opportunity_no'], []).append(row)
+    opportunity_conflicts = [name for name in OPPORTUNITY_METADATA + ATTRIBUTE_NUMBERS + DATE_FIELDS + ['probability']
+                             if name not in ('opp_amount_converted_currency', 'last_modified_date')]
     for opportunity, group in sorted(by_opportunity.items()):
         values = {name: [row[name] for row in group] for name in group[0]}
         row = {'opportunity_no': opportunity}
         row.update({name: sql_min(values[name]) for name in OPPORTUNITY_METADATA + ATTRIBUTE_NUMBERS})
         row.update({name: (sql_max if name == 'last_modified_date' else sql_min)(values[name]) for name in DATE_FIELDS})
-        amount = sql_sum(values['sku_amount'])
+        raw_group = raw_by_opportunity[opportunity]
+        invalid_currency = evidence(row, raw_group)
+        amount = None if invalid_currency else sql_sum(values['sku_amount'])
         lower, upper = sql_min(values['exported_opp_amount_min']), sql_max(values['exported_opp_amount_max'])
-        discrepancy = lower is None or upper is None or amount is None or lower != upper or abs(amount - upper) > Decimal('0.01')
-        # Opportunity attributes must agree across an opportunity's SKU rows; disagreement is flagged, never summed away.
-        attribute_conflict = any(conflicting(values[name]) for name in OPPORTUNITY_ATTRIBUTES)
+        issues = reasons(raw_group, opportunity_conflicts)
+        # Carry genuine SKU-specific conflicts to the parent review without treating
+        # different products/names or differing line amounts as parent conflicts.
+        for child in group:
+            for issue in quality['opportunity_sku'].get((opportunity, child['product_code']), []):
+                if issue['code'] == 'metadata_conflict' and issue['field'] in SKU_ONLY_METADATA:
+                    issues.append(dict(issue, message=f"Product {child['product_code']}: {issue['message']}"))
+        parent_currency = row['exported_opp_amount_currency']
+        line_currency = row['opp_amount_converted_currency']
+        if parent_currency and line_currency and parent_currency != line_currency:
+            issues.append({'code': 'currency_issue', 'field': 'source_opportunity_currency',
+                           'message': 'Line total and exported opportunity total use different currencies; they cannot be reconciled.',
+                           'values': [line_currency, parent_currency]})
+        can_compare = (not row['has_missing_line_amount'] and amount is not None and lower is not None
+                       and lower == upper and parent_currency and parent_currency == line_currency)
+        if can_compare and abs(amount - upper) > Decimal('0.01'):
+            issues.append({'code': 'amount_mismatch', 'field': 'opportunity_amount',
+                           'message': 'Sum of source line amounts differs from the repeated exported opportunity total by more than 0.01.',
+                           'product_total': amount, 'exported_total': upper, 'difference': amount - upper, 'currency': line_currency})
+        discrepancy = bool(any(issue['code'] in ('missing_amount', 'conflicting_parent_amount', 'currency_issue', 'amount_mismatch') for issue in issues))
         row.update(probability=sql_min(values['probability']), quantity=sql_sum(values['quantity']), opportunity_amount=amount,
                    sku_count=len(group), source_row_count=int(sum(values['source_row_count'])),
                    product_codes=', '.join(sorted(set(present(values['product_code'])))) or None,
                    product_names=', '.join(sorted(set(present(values['pet_name'])))) or None,
                    exported_opp_amount_min=lower, exported_opp_amount_max=upper, has_amount_discrepancy=discrepancy,
-                   has_quality_warning=bool(any(values['has_quality_warning']) or discrepancy or attribute_conflict))
+                   has_quality_warning=bool(issues))
+        if issues:
+            quality['opportunity'][opportunity] = issues
         opportunity_rows.append(row)
-    return CanonicalViews(sku, pd.DataFrame(opportunity_rows, columns=OPPORTUNITY_COLUMNS, dtype=object), excluded_rows=excluded)
+    return CanonicalViews(sku, pd.DataFrame(opportunity_rows, columns=OPPORTUNITY_COLUMNS + evidence_columns, dtype=object),
+                          excluded_rows=excluded, quality_details=quality)
 
 
 def demo_rows():
     def row(opp, sku, amount, quantity, parent, **extra):
-        return dict.fromkeys(RAW_COLUMNS) | {'opportunity_no': opp, 'product_code': sku, 'amount_converted': str(amount),
-            'quantity': str(quantity), 'opp_amount_converted': str(parent), 'stage': 'Won', 'opportunity_owner': 'Alex',
+        return dict.fromkeys(RAW_COLUMNS) | {'opportunity_no': opp, 'product_code': sku, 'amount_converted': str(parent),
+            'quantity': str(quantity), 'opp_amount_converted': str(amount), 'stage': 'Won', 'opportunity_owner': 'Alex',
             'end_customer': 'Example North', 'opportunity_name': 'Example project', 'pet_name': sku + ' product',
             'amount_converted_currency': 'EUR', 'opp_amount_converted_currency': 'EUR', 'probability': '75%',
             'close_date': '15/10/2026', 'close_month': '01/10/2026', 'first_channel': 'Partner', 'age': '30',

@@ -17,12 +17,19 @@ interface Props {
 
 interface TurnProps { turn: ConversationTurn; onView: Props['onView']; onPresentation: Props['onPresentation']; onExplore: Props['onExplore']; onSuggestion: Props['onSuggestion']; onRunWithCurrent: Props['onRunWithCurrent'] }
 
+/** Keep a long answer's question and headline in view; shorter turns fit at the end. */
+function latestPosition(scroller: HTMLElement) {
+  const last = scroller.querySelector<HTMLElement>('[data-testid="turn"]:last-child');
+  if (!last || last.getBoundingClientRect().height <= scroller.clientHeight - 24) return scroller.scrollHeight;
+  return Math.max(0, last.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 24);
+}
+
 /** One question with its answer. Memoized so a view or presentation change in one turn does not re-render the others
  *  (their tables and charts), which keeps result controls responsive in long conversations. */
 const Turn = memo(function Turn({turn, onView, onPresentation, onExplore, onSuggestion, onRunWithCurrent}: TurnProps) {
   return (
     <article key={turn.id} className="flex flex-col gap-3" data-testid="turn">
-      <div className="flex justify-end"><p className="max-w-[780px] whitespace-pre-wrap rounded-2xl bg-surface px-4 py-2.5 text-[15px]" data-testid="user-turn">{turn.question}</p></div>
+      <div className="flex justify-end"><p className="max-w-[780px] whitespace-pre-wrap rounded-2xl bg-accent-soft px-4 py-2.5 text-[15px] text-ink" data-testid="user-turn">{turn.question}</p></div>
       <div className="max-w-full" data-testid="assistant-turn" data-status={turn.assistant.status}>
         {turn.assistant.status === 'pending' && (
           <div className="flex items-center gap-2 text-sm text-ink-2" role="status" aria-live="polite">
@@ -50,7 +57,7 @@ const Turn = memo(function Turn({turn, onView, onPresentation, onExplore, onSugg
         )}
         {turn.assistant.status === 'answer' && (
           <ResultCard answer={turn.assistant.answer} shown={turn.assistant.shown} view={turn.assistant.view} presentation={turn.assistant.presentation} loading={turn.assistant.loading} notice={turn.assistant.notice}
-            onView={v => onView(turn, v)} onPresentation={p => onPresentation(turn, p)} onExplore={() => onExplore(turn)} onSuggestion={onSuggestion} />
+            onView={v => onView(turn, v)} onPresentation={p => onPresentation(turn, p)} onExplore={() => onExplore(turn)} onSuggestion={onSuggestion} onRerun={() => onRunWithCurrent(turn)} />
         )}
       </div>
     </article>
@@ -68,10 +75,10 @@ export function Conversation({turns, onView, onPresentation, onExplore, onSugges
   const ignoreScrollUntil = useRef(0);   // programmatic smooth scrolls must not flip the follow state
   const followingRef = useRef(true);
   useEffect(() => { followingRef.current = following; }, [following]);
-  // While the reader follows the latest turn, content that grows later (restored results, charts) keeps the end in view.
+  // Late content (restored results, charts) keeps the latest answer's beginning visible when it is taller than the viewport.
   useEffect(() => {
     const el = scroller.current; const inner = el?.firstElementChild; if (!el || !inner) return;
-    const observer = new ResizeObserver(() => { if (followingRef.current && el.scrollHeight - el.scrollTop - el.clientHeight > 1) { ignoreScrollUntil.current = Date.now() + 250; el.scrollTop = el.scrollHeight; } });
+    const observer = new ResizeObserver(() => { const top = latestPosition(el); if (followingRef.current && Math.abs(top - el.scrollTop) > 1) { ignoreScrollUntil.current = Date.now() + 250; el.scrollTop = top; } });
     observer.observe(inner); return () => observer.disconnect();
   }, []);
 
@@ -88,7 +95,7 @@ export function Conversation({turns, onView, onPresentation, onExplore, onSugges
     if (following || submitted || restored) {
       if (!following) { setFollowing(true); setUnseen(false); }
       ignoreScrollUntil.current = Date.now() + 900;
-      requestAnimationFrame(() => el.scrollTo({top: el.scrollHeight, behavior: restored || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}));
+      requestAnimationFrame(() => el.scrollTo({top: latestPosition(el), behavior: restored || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}));
     } else setUnseen(true);
   }, [turns, following]);
 
@@ -104,8 +111,9 @@ export function Conversation({turns, onView, onPresentation, onExplore, onSugges
         <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-6 px-4 py-6 md:px-6">
           {empty && (
             <div className="mx-auto mt-[12vh] max-w-[620px] text-center">
-              <h1 className="text-[26px] font-semibold tracking-tight">What would you like to understand?</h1>
-              <p className="mt-2 text-[15px] text-ink-2">Ask about opportunities, products, owners, stages, and amounts. Every answer shows its numbers, its data, and when the data was updated.</p>
+              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-accent">B2B intelligence</p>
+              <h1 className="text-[clamp(28px,4vw,42px)] font-semibold leading-tight tracking-tight">Your pipeline.<br />A clearer picture.</h1>
+              <p className="mx-auto mt-4 max-w-[460px] text-[15px] text-ink-2">Explore opportunities, products and performance. Ask a question to start an analysis.</p>
               {samples && <div className="mt-6">{samples}</div>}
             </div>
           )}
@@ -113,7 +121,7 @@ export function Conversation({turns, onView, onPresentation, onExplore, onSugges
         </div>
       </div>
       {unseen && !following && (
-        <Button size="sm" className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full shadow-lg" onClick={() => { scroller.current?.scrollTo({top: scroller.current.scrollHeight, behavior: 'smooth'}); setUnseen(false); setFollowing(true); }} data-testid="new-answer">
+        <Button size="sm" className="absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full shadow-lg" onClick={() => { const el = scroller.current; if (el) { ignoreScrollUntil.current = Date.now() + 900; el.scrollTo({top: latestPosition(el), behavior: 'smooth'}); } setUnseen(false); setFollowing(true); }} data-testid="new-answer">
           <ArrowDown />New answer
         </Button>
       )}

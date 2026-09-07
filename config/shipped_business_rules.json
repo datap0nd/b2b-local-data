@@ -1,0 +1,21 @@
+{
+  "normalization": "UTF-8 without BOM; CRLF/CR normalized to LF; all other content significant",
+  "versions": [
+    {
+      "source_commit": "415a5b31bfd733a16ef3c5c9a2901b6ff8657e4d",
+      "sha256": "caaf3dac87a98d3b8306e78f7d09a81196e8202cefa958beb69830db4b2c7f8c"
+    },
+    {
+      "source_commit": "e17a6f795380034833c6a6d0cfbd08bb9f3182c1",
+      "sha256": "d7cca7b7e9391c24fd363fa5b16473dd1d307e95bd634096256b9a7cc765f618"
+    },
+    {
+      "source_commit": "01616072d72fbb358939394e91c429228b7aac4e",
+      "sha256": "0cb6a3b548065ff47c6a64789942f68d9a4009738f80dd6f5a853802ba913fd3"
+    },
+    {
+      "source_commit": "f7c748226fcfc72730c5e846bab026dbca5d05e4",
+      "sha256": "446b0a5849a737437b4c8eaa7949e980b23706e7488293b9f03cda52846b1ea1"
+    }
+  ]
+}

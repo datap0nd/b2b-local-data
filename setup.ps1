@@ -39,11 +39,8 @@ if (-not $InstallDir) { $InstallDir = $scriptRoot }
 if (-not [IO.Path]::IsPathRooted($InstallDir)) { $InstallDir = Join-Path $scriptRoot $InstallDir }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-# A downloaded repo can supply the template before private-repository authentication.
+# Read existing config for authentication; defer all config writes until release checks pass.
 $envPath = Join-Path $InstallDir '.env'
-if (-not (Test-Path -LiteralPath $envPath) -and (Test-Path -LiteralPath (Join-Path $scriptRoot '.env.example'))) {
-    Copy-Item -LiteralPath (Join-Path $scriptRoot '.env.example') -Destination $envPath
-}
 $localValues = Read-EnvFile $envPath
 # DG_GITHUB_TOKEN is the same GitHub token the data-governance installer uses: an environment variable, or a .env line.
 $githubToken = Setting 'DG_GITHUB_TOKEN' $localValues
@@ -57,6 +54,8 @@ $setupLock = $null
 $script:releaseAssets = $null
 $script:archiveDownloads = 0
 $script:archiveReused = 0
+$configMigrated = $false
+$releaseSelected = $false
 
 function Download-File([string]$Url, [string]$Path, [hashtable]$Headers) {
     if ($Offline) { throw "Offline mode: missing required archive $([IO.Path]::GetFileName($Path))" }
@@ -168,7 +167,7 @@ try {
     New-Item -ItemType Directory -Force -Path $release | Out-Null
     # A clean directory means code removed from main cannot linger in the running app.
     # Local configuration/data and dependency caches are not part of application code.
-    $preserved = @('.git','.local','.downloads','.test-postgres','.venv','runtime','dependencies','releases','vendor','data','incoming','__pycache__','.env','schema.json','business_rules.md','current.json','previous.json','.release.json','.setup.lock')
+    $preserved = @('.git','.local','.downloads','.config-backups','.test-postgres','.venv','runtime','dependencies','releases','vendor','data','incoming','__pycache__','.env','schema.json','business_rules.md','current.json','previous.json','.release.json','.setup.lock')
     foreach ($item in Get-ChildItem -LiteralPath $source -Force) {
         if ($item.Name -in $preserved -or $item.Name -like '.install-test*' -or $item.Name -like 'vendor.*' -or ($item.Name -like '.env.*' -and $item.Name -ne '.env.example')) { continue }
         Copy-Item -LiteralPath $item.FullName -Destination $release -Recurse
@@ -203,26 +202,32 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Local dependency extraction or verification failed.' }
     & $python (Join-Path $release 'run.py') --self-test
     if ($LASTEXITCODE -ne 0) { throw 'Release checks failed; the previous release is still selected.' }
-    foreach ($pair in @(@('.env.example','.env'), @('config\business_rules.example.md','business_rules.md'))) {
-        $target = Join-Path $InstallDir $pair[1]
-        if (-not (Test-Path -LiteralPath $target)) { Copy-Item -LiteralPath (Join-Path $release $pair[0]) -Destination $target }
-    }
+    $configHelper = Join-Path $release 'scripts\install_config.py'
+    & $python $configHelper --home $InstallDir --release $release --transaction $installId
+    if ($LASTEXITCODE -ne 0) { throw 'Local configuration migration failed; the previous release is still selected.' }
+    $configMigrated = $true
     $checkOutput = & $python (Join-Path $release 'run.py') --home $InstallDir --check 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { throw "Local configuration check failed; the previous release is still selected. The new release reported: $(($checkOutput -join ' ').Trim()) Fix the named setting in $InstallDir\.env and run setup.ps1 again." }
     [IO.File]::WriteAllText((Join-Path $release '.release.json'), (@{commit=$commit} | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
-    $pointer = @{ release=$release; python=$python; commit=$commit; installed_at=[DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
+    $pointer = @{ release=$release; python=$python; commit=$commit; installed_at=[DateTime]::UtcNow.ToString('o'); config_backup=$installId } | ConvertTo-Json
     $pending = Join-Path $InstallDir "current-$installId.json"
     [IO.File]::WriteAllText($pending, $pointer, (New-Object System.Text.UTF8Encoding($false)))
     $current = Join-Path $InstallDir 'current.json'
     if (Test-Path -LiteralPath $current) { [IO.File]::Replace($pending, $current, (Join-Path $InstallDir 'previous.json')) }
     else { [IO.File]::Move($pending, $current) }
+    $releaseSelected = $true
     foreach ($name in @('start.ps1','setup.ps1','update_app.ps1')) { Copy-Item -LiteralPath (Join-Path $release $name) -Destination (Join-Path $InstallDir $name) -Force }
     Write-Host "Ready in this folder: $InstallDir"
     Write-Host "Active application: $release"
-    Write-Host 'Local .env, business rules, and conversation/data files were preserved.'
+    Write-Host 'Local settings and data were preserved. Missing Test defaults and known shipped business rules were updated with local backups.'
     Write-Host 'Run start.ps1. After an update, stop the running app with Ctrl+C and start it again.'
 } catch {
-    Write-Error $_
+    $setupError = $_
+    if ($configMigrated -and -not $releaseSelected) {
+        & $python $configHelper --home $InstallDir --transaction $installId --rollback
+        if ($LASTEXITCODE -ne 0) { Write-Warning 'Configuration restore needs manual review of the local .config-backups folder.' }
+    }
+    Write-Error $setupError
     exit 1
 } finally {
     if ($setupLock) { $setupLock.Dispose() }

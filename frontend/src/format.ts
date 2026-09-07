@@ -3,8 +3,8 @@
 import type {Cell, ColumnType, Grain, TablePayload} from './types';
 
 export const LABELS: Record<string, string> = {
-  opportunity_no: 'Opportunity no.', opportunity_name: 'Opportunity', end_customer: 'Customer', opportunity_owner: 'Owner', stage: 'Stage', stage_group: 'Stage group',
-  close_date: 'Close date', close_month: 'Close month', created_date: 'Created', last_modified_date: 'Last modified', product_code: 'Product code', pet_name: 'Product',
+  opportunity_no: 'Opportunity no.', opportunity_name: 'Opportunity', end_customer: 'Customer', opportunity_owner: 'Owner', stage: 'Stage', stage_group: 'Opportunity status',
+  close_date: 'Close date', close_month: 'Closing month', created_date: 'Created', last_modified_date: 'Last modified', product_code: 'Product code', pet_name: 'Product',
   product_codes: 'Product codes', product_names: 'Product names', quantity: 'Quantity', opportunity_amount: 'Amount', sku_amount: 'Amount', amount: 'Amount',
   deal_size: 'Deal size (USD)', deal_size_on_pricing_date_usd: 'Deal size (USD)', sku_count: 'Product count', opportunity_count: 'Opportunity count',
   opp_amount_converted_currency: 'Currency', amount_converted_currency: 'Currency', has_amount_discrepancy: 'Amount check', has_quality_warning: 'Data quality',
@@ -129,14 +129,20 @@ const DEFAULTS: Record<Grain, string[]> = {
 };
 export const isDefaultColumn = (grain: Grain, column: string) => DEFAULTS[grain].includes(column);
 export function filterText(f: {field: string; operator: string; value: Cell | Cell[]}, types: Record<string, ColumnType>): string {
+  if (f.field === 'stage_group' && f.operator === 'eq') return `${String(f.value)} opportunities`;
+  if (['close_date', 'close_month', 'created_date'].includes(f.field) && f.operator === 'between' && Array.isArray(f.value)) {
+    const [start, end] = f.value.map(String);
+    if (/^\d{4}-01-01$/.test(start) && end === `${start.slice(0, 4)}-12-31`) return `${f.field === 'created_date' ? 'Created' : 'Closing'} in ${start.slice(0, 4)}`;
+  }
   const type = types[f.field] ?? (MONEY.has(f.field) || f.field === 'quantity' ? 'number' : /date|month/.test(f.field) ? 'date' : /^has_/.test(f.field) ? 'bool' : 'text');
   const one = (v: Cell) => v == null ? 'empty' : type === 'date' ? formatDate(v, MONTH_FIELDS.has(f.field)) : type === 'number' ? (PERCENT_FIELDS.has(f.field) ? formatPercent(v) : formatNumber(v, null)) : type === 'bool' ? (v ? 'yes' : 'no') : String(v);
   const value = Array.isArray(f.value) ? f.value.map(one).join(f.operator === 'between' ? ' and ' : ', ') : one(f.value);
   return `${label(f.field)} ${OPS[f.operator] ?? f.operator} ${value}`;
 }
-export function csvText(table: TablePayload, rows: Record<string, Cell>[]): string {
-  // Every returned column, the given rows in their order; formula prefixes guarded; values exact.
-  const cell = (value: Cell) => { let text = value == null ? '' : String(value); if (/^[\s]*[=+\-@\t\r]/.test(text)) text = "'" + text; return '"' + text.replaceAll('"', '""') + '"'; };
-  const lines = [table.columns, ...rows.map(row => table.columns.map(c => row[c]))];
-  return '﻿' + lines.map(line => line.map(cell).join(',')).join('\r\n');
+export function csvText(table: Pick<TablePayload, 'columns' | 'column_types'>, rows: Record<string, Cell>[]): string {
+  // Only complete typed numeric literals bypass the formula guard. IDs and headers remain text.
+  const numericLiteral = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
+  const cell = (value: Cell, numeric = false) => { let text = value == null ? '' : String(value); if (!(numeric && numericLiteral.test(text)) && /^[\s]*[=+\-@\t\r]/.test(text)) text = "'" + text; return '"' + text.replaceAll('"', '""') + '"'; };
+  const lines = [table.columns.map(column => cell(column)).join(','), ...rows.map(row => table.columns.map(column => cell(row[column], table.column_types[column] === 'number')).join(','))];
+  return '﻿' + lines.join('\r\n');
 }

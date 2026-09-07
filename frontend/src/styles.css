@@ -3,20 +3,21 @@
 @import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";
 
-/* Neutral, minimal surfaces: white and soft gray, near-black text, restrained emerald accents for selection and status. */
+/* Warm work surface, clear white analysis panels, and a single cobalt action accent. */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --color-canvas: #ffffff;
-  --color-surface: #f6f7f8;
-  --color-surface-2: #eef0f2;
-  --color-ink: #111827;
-  --color-ink-2: #4b5563;
-  --color-ink-3: #6b7280;
-  --color-line: #e5e7eb;
-  --color-line-2: #d1d5db;
-  --color-accent: #047857;
-  --color-accent-soft: #ecfdf5;
-  --color-accent-line: #a7f3d0;
+  --color-page: #f5f4f0;
+  --color-surface: #f1f2f5;
+  --color-surface-2: #e7eaf0;
+  --color-ink: #18233b;
+  --color-ink-2: #4b5871;
+  --color-ink-3: #65728a;
+  --color-line: #e0e4eb;
+  --color-line-2: #cbd3e1;
+  --color-accent: #315bd6;
+  --color-accent-soft: #eef2ff;
+  --color-accent-line: #c7d2fe;
   --color-warn: #92400e;
   --color-warn-soft: #fffbeb;
   --color-warn-line: #fde68a;
@@ -29,8 +30,8 @@
   --color-open-soft: #dbeafe;
   --color-lost: #7f1d1d;
   --color-lost-soft: #fee2e2;
-  --radius-card: 12px;
-  --shadow-card: 0 1px 2px rgb(17 24 39 / 0.05), 0 1px 3px rgb(17 24 39 / 0.04);
+  --radius-card: 16px;
+  --shadow-card: 0 2px 4px rgb(24 35 59 / 0.025), 0 10px 32px rgb(24 35 59 / 0.04);
 }
 
 @layer base {
@@ -45,4 +46,6 @@
 @layer components {
   .tabular { font-variant-numeric: tabular-nums; }
   .scroll-thin { scrollbar-width: thin; scrollbar-color: var(--color-line-2) transparent; }
+  [data-rail="true"] .test-entry { justify-content: center; padding-inline: 0; }
+  [data-rail="true"] .test-entry span { display: none; }
 }

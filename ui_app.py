@@ -16,7 +16,7 @@ import threading
 from time import monotonic
 from typing import Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,9 +26,9 @@ from acceptance_suite import manifest
 from answer_text import compose_answer, default_suggestions
 from app_config import APP_VERSION, ROOT, AppError, verify_release
 from data_layer import DataRepository
-from history_store import HistoryStore
-from query_engine import PlannerClient, QueryExecutor, parse_plan
-from query_service import QueryService
+from history_store import HistoryStore, ordered_supporting_rows, supporting_csv
+from query_engine import CALCULATION_VERSION, PlannerClient, QueryExecutor, parse_plan
+from query_service import QueryService, public_answer_payload
 
 DIST = ROOT / 'web/dist'
 ASSET_TYPES = {'.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.map': 'application/json', '.json': 'application/json', '.ico': 'image/x-icon'}
@@ -199,7 +199,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     app.state.snapshots=Snapshots(repository or DataRepository(settings),settings.number('B2B_CACHE_SECONDS',60,low=0,high=3600))
     app.state.executor=QueryExecutor()
     app.state.service=QueryService(app.state.planner,app.state.executor)
-    acceptance_ui=settings.flag('B2B_ENABLE_ACCEPTANCE_UI',False)
+    acceptance_ui=settings.flag('B2B_ENABLE_ACCEPTANCE_UI',True)
     app.state.acceptance=AcceptanceRunner(settings,app.state.snapshots.repository,app.state.service,settings.data_dir) if acceptance_ui else None
     lane=app.state.service.lane
     secret=cookie_secret(settings)
@@ -306,6 +306,12 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
                 'cache_seconds':app.state.snapshots.seconds,'snapshot_at':app.state.snapshots.loaded_at,'acceptance_ui':acceptance_ui,
                 'qualification':app.state.acceptance.qualification(request.state.owner) if app.state.acceptance and request.state.owner else None}
 
+    @app.get('/api/freshness')
+    def freshness(request:Request):
+        """Verified time of the current cached dataset, never an answer or app-load time."""
+        views,_=app.state.snapshots.get()
+        return {'freshness':getattr(views,'freshness',None) or {'status':'unavailable','updated_at':None,'reason':'No verified data-update time is available for this source.'}}
+
     # ----- conversations and saved answers -----
     @app.get('/api/sessions')
     def sessions(request:Request,q:str|None=None): return {'sessions':app.state.store.list(request.state.owner,(q or '')[:100] or None)}
@@ -333,13 +339,44 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         if saved is None:
             turn=app.state.store.turn(request.state.owner,session_id,turn_id)
             return {'available':False,'turn_id':turn_id,'kind':turn['kind'],'can_rerun':bool(turn['plan']),'message':'This answer predates saved results. Run with current data to get a new, dated answer.'}
-        return {'available':True,'turn_id':turn_id,'session_id':session_id,'suggestions':default_suggestions(saved['table'])}|saved
+        if (saved.get('table',{}).get('metadata') or {}).get('calculation_version')!=CALCULATION_VERSION:
+            return {'available':False,'turn_id':turn_id,'kind':'data','can_rerun':True,'message':'This answer used earlier amount and summary calculations. Run with current data for a corrected answer. The original record is preserved.'}
+        return public_answer_payload({'available':True,'turn_id':turn_id,'session_id':session_id,'suggestions':default_suggestions(saved['table'])}|saved)
+
+    @app.get('/api/sessions/{session_id}/turns/{turn_id}/supporting')
+    def supporting_page(request:Request,session_id:str,turn_id:int,view:Literal['summary','detail']='summary',
+                        page:int=Query(default=0,ge=0),page_size:int=Query(default=50,ge=1,le=200),sort:str|None=None,
+                        direction:Literal['asc','desc']='asc'):
+        """Page frozen evidence from the saved answer, without a current-data read."""
+        result=app.state.store.load_supporting(request.state.owner,session_id,turn_id,view)
+        if not result['available']:
+            return result
+        table=result['table']
+        ordered=ordered_supporting_rows(table,sort,direction)
+        start=page*page_size
+        page_rows=ordered[start:start+page_size]
+        visible=dict(table,rows=page_rows,truncated=len(page_rows)<len(ordered))
+        return {'available':True,'view':view,'page':page,'page_size':page_size,'total_rows':len(ordered),'table':visible}
+
+    @app.get('/api/sessions/{session_id}/turns/{turn_id}/supporting.csv')
+    def supporting_download(request:Request,session_id:str,turn_id:int,view:Literal['summary','detail']='summary',
+                            sort:str|None=None,direction:Literal['asc','desc']='asc'):
+        """Export every frozen matching business row in the selected exact order."""
+        result=app.state.store.load_supporting(request.state.owner,session_id,turn_id,view)
+        if not result['available']:
+            raise AppError(result.get('message') or 'The complete supporting list is unavailable.')
+        table=result['table']
+        body=supporting_csv(table,ordered_supporting_rows(table,sort,direction)).encode('utf-8')
+        return Response(body,media_type='text/csv; charset=utf-8',headers={
+            'Content-Disposition':f'attachment; filename="b2b-supporting-{view}.csv"','Cache-Control':'private, no-store'})
 
     @app.post('/api/sessions/{session_id}/turns/{turn_id}/actions')
     def result_action(request:Request,session_id:str,turn_id:int,payload:ActionRequest):
         """Deterministic view changes on a saved answer: Summary/Detailed or table/chart/cards presentation. No SQL, no model."""
         saved=app.state.store.load_result(request.state.owner,session_id,turn_id)
         if saved is None: raise AppError('This answer has no saved result to switch. Run with current data first.')
+        if (saved.get('table',{}).get('metadata') or {}).get('calculation_version')!=CALCULATION_VERSION:
+            raise AppError('This answer used earlier calculations. Run with current data before exploring its results.')
         table=saved['table']
         if payload.action=='view':
             if payload.view is None: raise AppError('Choose summary or detail.')
@@ -362,7 +399,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         app.state.store.log_activity(request.state.owner,request.state.ip,'rerun',session_id,f'turn {turn_id}')
         views,timestamp=app.state.snapshots.get()
         payload=app.state.service.execute_and_save(app.state.store,request.state.owner,session_id,turn['question'],plan,views,timestamp,rerun_of=turn_id)
-        return {'kind':'table','suggestions':[]}|payload
+        return public_answer_payload({'kind':'table','suggestions':[]}|payload)
 
     # ----- questions -----
     @app.post('/api/ask')
@@ -374,7 +411,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
             session_id=payload.session_id or app.state.store.create(owner)
             app.state.store.log_activity(owner,request.state.ip,'ask',session_id,payload.question.strip())
             views,timestamp=app.state.snapshots.get()
-            return app.state.service.ask(app.state.store,owner,session_id,payload.question,payload.view,views,timestamp)
+            return public_answer_payload(app.state.service.ask(app.state.store,owner,session_id,payload.question,payload.view,views,timestamp))
         finally: lane.release()
 
     @app.post('/api/sample')
@@ -391,7 +428,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
             else: values={'result_kind':'aggregate','presentation':'chart' if payload.intent=='chart' else 'table','grain':grain,'group_by':['stage_group'],'measures':['amount','opportunity_count'],'chart_type':'bar' if payload.intent=='chart' else None}
             views,timestamp=app.state.snapshots.get()
             question=f"Preview: {payload.view} {'table' if payload.intent=='table' else payload.intent}"
-            return {'kind':'table','suggestions':[]}|app.state.service.execute_and_save(app.state.store,owner,session_id,question,parse_plan(values),views,timestamp)
+            return public_answer_payload({'kind':'table','suggestions':[]}|app.state.service.execute_and_save(app.state.store,owner,session_id,question,parse_plan(values),views,timestamp))
         finally: lane.release()
 
     @app.post('/api/rerun')
@@ -403,7 +440,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         views,timestamp=app.state.snapshots.get()
         saved=app.state.store.read(request.state.owner,payload.session_id)
         question=next((t['question'] for t in reversed(saved['turns']) if t.get('plan')),'Run with current data')
-        return {'kind':'table','suggestions':[]}|app.state.service.execute_and_save(app.state.store,request.state.owner,payload.session_id,question,plan,views,timestamp)
+        return public_answer_payload({'kind':'table','suggestions':[]}|app.state.service.execute_and_save(app.state.store,request.state.owner,payload.session_id,question,plan,views,timestamp))
 
     if acceptance_ui:
         # Acceptance-test APIs (development only): the server owns the suite, the order, and the expected results.

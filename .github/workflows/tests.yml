@@ -29,7 +29,8 @@ jobs:
         shell: pwsh
         run: .\tests\portable_install.ps1
   frontend:
-    runs-on: ubuntu-24.04
+    # Use the same Windows ABI as the locked portable backend for browser integration.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,15 +38,37 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - name: Install pinned frontend dependencies
         working-directory: frontend
         run: npm ci
       - name: Committed compiled assets match their source
         working-directory: frontend
         run: npm run verify
-      - name: Type check, unit tests, and production build
+      - name: Frontend type check
         working-directory: frontend
-        run: |
-          npm run typecheck
-          npm test
-          npm run build
+        run: npm run typecheck
+      - name: Frontend unit tests
+        working-directory: frontend
+        run: npm test
+      - name: Production frontend build
+        working-directory: frontend
+        run: npm run build
+      - name: Install locked backend dependencies
+        run: python scripts/vendor_dependencies.py
+      - name: Install browser
+        working-directory: frontend
+        run: npx playwright install chromium
+      - name: Browser regression with isolated fictional-data backend
+        shell: pwsh
+        run: .\frontend\scripts\e2e-demo.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence
+          path: |
+            frontend/test-results
+            ${{ runner.temp }}/b2b-browser-tests/server-*.log
+          retention-days: 7

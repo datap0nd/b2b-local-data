@@ -1,6 +1,10 @@
+-- HISTORICAL ONLY: the amount formulas and MIN(channel) below predate
+-- salesforce-lines-v2. This file is not current calculation documentation or an
+-- acceptance oracle. See docs/data-contract.md; current live-source mapping must
+-- be independently verified against its extraction definition.
 -- LEGACY VIEW REFRESH. The application (0.4.0 and later) reads the raw table directly and does not
 -- depend on these views or on the version ledger; the read-only application role needs no DDL.
--- Apply this only if other consumers still use the derived views, so that they agree with the app:
+-- Historical scope for older consumers (not current monetary parity with the app):
 --   * day-first dates accept one- or two-digit day and month (e.g. 1/12/2022), ISO YYYY-MM-DD text is accepted
 --     as well (typed date columns rendered as text), and invalid dates stay NULL;
 --   * the four columns added later (1st_channel, age, comment, deal_size_on_pricing_date_usd) are exposed

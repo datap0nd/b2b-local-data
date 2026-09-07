@@ -45,13 +45,13 @@ def synthetic_records(seed=7,opportunities=60,years=None):
                 parent+=amount
                 lines.append(dict.fromkeys(RAW_COLUMNS)|{'opportunity_no':opp,'product_code':product,'pet_name':product+' unit','gscm_product_group_new':'Group '+product[2],
                     'subsidiary_subsidiary_code':f'{n%3:03d}','opportunity_name':f'Project {n}','end_customer':customer,'stage':stage,'opportunity_owner':owner,'type':TYPES[n%3],
-                    'biz_focus':'Focus','business_location':'Berlin','division':'Div','sales_type_detail':'Detail','quantity':str(qty),'amount_converted':str(amount),
+                    'biz_focus':'Focus','business_location':'Berlin','division':'Div','sales_type_detail':'Detail','quantity':str(qty),'opp_amount_converted':str(amount),
                     'amount_converted_currency':'EUR','opp_amount_converted_currency':'EUR','probability':probability,'close_date':close_date,'close_month':close_month,
                     'created_date':created,'last_modified_date':modified,'first_channel':'Partner' if n%2 else 'Direct','age':str(n%90),'comment':f'Note {n}',
                     'deal_size_on_pricing_date_usd':str(n*100),'rollout_period_from':'2026-Q1','rollout_period_to':'2026-Q4'})
         if n%11==0: parent+=Decimal('5')          # parent-amount discrepancy
         if n%13==0: lines.append(dict(lines[0],pet_name='Renamed unit'))   # repeated raw row with a conflicting product name -> quality warning
-        for line in lines: line['opp_amount_converted']=str(parent)
+        for line in lines: line['amount_converted']=str(parent)
         records.extend(lines)
     records.append(dict.fromkeys(RAW_COLUMNS)|{'opportunity_no':'','product_code':'P-100','quantity':'1','amount_converted':'1'})
     return records

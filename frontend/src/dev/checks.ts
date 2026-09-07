@@ -2,7 +2,7 @@
 // ordinary answers). Expected values come from dev/independent.ts; ECharts SVG geometry is read from the DOM.
 import * as echarts from 'echarts';
 import type {Cell, TablePayload} from '@/types';
-import {axisLabel, csvExpected, currency, decimalCompare, expectedCell, expectedChip, expectedHeader, expectedRowText, expectedVisible, fmtNumber, LABELS, MEASURE_LABELS, MERGE, measureText, MONEY, STAGE_GROUP} from './independent';
+import {axisLabel, csvExpected, currency, decimalCompare, expectedCell, expectedChip, expectedHeader, expectedRowText, expectedVisible, LABELS, MEASURE_LABELS, MERGE, measureText, MONEY, STAGE_GROUP} from './independent';
 
 export interface Observation { status: 'pass' | 'fail' | 'blocked'; expected?: unknown; observed?: unknown; notes?: string }
 export interface Harness { root: HTMLElement; table: TablePayload; original: TablePayload; errors: () => number; frame: () => Promise<void>; setWidth: (px: number | null) => void; synthetic?: boolean }
@@ -50,7 +50,7 @@ async function hoverAt(h: Harness, x: number, y: number, dataIndex?: number) {
   }
   return text;
 }
-const FIRST = '#047857';
+const FIRST = '#315bd6';
 
 export const CHECKS: Record<number, (h: Harness) => Promise<Observation>> = {
   1: h => tableCheck(h, 'summary'),
@@ -96,7 +96,7 @@ async function tableCheck(h: Harness, kind: 'summary' | 'detail'): Promise<Obser
   // Column menu lists every returned column with its business label.
   const trigger = qa<HTMLButtonElement>(t, 'button').find(b => b.textContent?.trim() === 'Columns') ?? null;
   let menuOk = true, menu: string[] = [];
-  if (trigger) { await openMenu(trigger, h); menu = menuItems().map(i => i.textContent!.trim()); const partners = Object.entries(MERGE).filter(([c, p]) => visible.includes(c) && table.columns.includes(p) && !visible.includes(p)).map(([, p]) => p); const wantMenu = table.columns.filter(c => !partners.includes(c)).map(c => expectedHeader(table, c)); menuOk = [...menu].sort().join('|') === [...wantMenu].sort().join('|') && menu.slice(0, visible.length).join('|') === visible.map(c => expectedHeader(table, c)).join('|'); await closeMenu(h); }
+  if (trigger) { await openMenu(trigger, h); menu = menuItems().map(i => i.textContent!.trim()); const wantMenu = table.columns.map(c => expectedHeader(table, c)); menuOk = [...menu].sort().join('|') === [...wantMenu].sort().join('|') && menu.slice(0, visible.length).join('|') === visible.map(c => expectedHeader(table, c)).join('|'); await closeMenu(h); }
   const keyOk = kind === 'detail' ? observedHeaders[0] === 'Opportunity no.' && observedHeaders[1] === 'Product' : observedHeaders[0] === 'Opportunity';
   const ok = JSON.stringify(observedHeaders) === JSON.stringify(wantHeaders) && observedRows.length === table.rows.length && mismatches.length === 0 && detailsOk && menuOk && keyOk;
   return result(ok, {headers: wantHeaders, rows: table.rows.length, menu: table.columns.length}, {headers: observedHeaders, rows: observedRows.length, mismatches, detailsOk, details, menuOk, menu, keyOk}, `${table.rows.length} returned rows compared cell by cell across pages against independently formatted values; row details and the column menu checked.`);
@@ -161,8 +161,8 @@ async function csvCheck(h: Harness): Promise<Observation> {
     const ordered = domRows.map(r => byKey.get(key(r)));
     const csvRows = observed.split('\r\n').slice(1);
     const expectedSorted = csvExpected(table, ordered.filter(Boolean) as Record<string, Cell>[]);
-    const sameSet = observed.length === csvExpected(table, h.original.rows).length;
-    const ok = (observed === expectedSorted || (sameSet && csvRows.length === table.rows.length)) && observed.charCodeAt(0) === 0xfeff && ordered.every(Boolean);
+
+    const ok = observed === expectedSorted && observed.charCodeAt(0) === 0xfeff && ordered.every(Boolean);
     return result(ok, {rows: table.rows.length, columns: table.columns.length, firstLine: expectedSorted.split('\r\n')[1]?.slice(0, 160)}, {rows: csvRows.length, bom: observed.charCodeAt(0) === 0xfeff, firstLine: csvRows[0]?.slice(0, 160), matchesSortedOrder: observed === expectedSorted, type: captured[0].type}, 'Export triggered through the CSV control: every returned column and row, exact values, every cell quoted, quotes doubled, formula prefixes guarded; the file follows the displayed order.');
   } finally { URL.createObjectURL = create; URL.revokeObjectURL = revoke; document.removeEventListener('click', stop, true); }
 }
@@ -172,7 +172,7 @@ async function barCheck(h: Harness): Promise<Observation> {
   const table = h.table, spec = table.chart!, dim = spec.dimensions[0];
   const measure = (q<HTMLSelectElement>(h.root, 'select[aria-label="Chart measure"]')?.value) ?? spec.measures[0];
   const shown = Number(chart(h)!.dataset.shown);
-  const groups = h.original.rows.slice(0, shown).map(r => ({label: axisLabel(table, dim, r[dim]), value: r[measure]})).filter(g => g.value != null && Number.isFinite(Number(g.value)));
+  const groups = independentlyOrderedChart(h.original, measure, shown < h.original.rows.length).slice(0, shown).map(r => ({label: axisLabel(table, dim, r[dim]), value: r[measure]})).filter(g => g.value != null && Number.isFinite(Number(g.value)));
   const bars = fills(svg, FIRST).map(el => el.getBBox()).filter(b => b.height > 4 && b.height < 40).sort((a, b) => a.y - b.y);
   const max = Math.max(...groups.map(g => Math.abs(Number(g.value))));
   const widest = Math.max(...bars.map(b => b.width));
@@ -183,13 +183,13 @@ async function barCheck(h: Harness): Promise<Observation> {
   const orderOk = bars.every((b, i) => i === 0 || b.y > bars[i - 1].y);
   const tip = bars.length ? await hoverAt(h, bars[0].x + bars[0].width / 2, bars[0].y + bars[0].height / 2, 0) : '';
   const tipOk = tip.includes(groups[0]?.label ?? '') && tip.includes(measureText(table, measure, groups[0]?.value ?? null));
-  return result(lengthsOk && valueLabelsOk && categoryOk && orderOk && tipOk, {groups: groups.slice(0, 10)}, {bars: bars.slice(0, 10).map(b => ({y: Math.round(b.y), width: Math.round(b.width)})), lengthsOk, valueLabelsOk, categoryOk, orderOk, tooltip: tip.slice(0, 200)}, `${groups.length} horizontal bars in server order; widths measured from the SVG and compared with the values; value labels and tooltip compared with independently formatted text.`);
+  return result(lengthsOk && valueLabelsOk && categoryOk && orderOk && tipOk, {groups: groups.slice(0, 10)}, {bars: bars.slice(0, 10).map(b => ({y: Math.round(b.y), width: Math.round(b.width)})), lengthsOk, valueLabelsOk, categoryOk, orderOk, tooltip: tip.slice(0, 200)}, `${groups.length} horizontal bars in displayed ranking order; widths measured from the SVG and compared with the values; value labels and tooltip compared with independently formatted text.`);
 }
 
 async function lineCheck(h: Harness, area: boolean): Promise<Observation> {
   const svg = svgOf(h) as SVGSVGElement | null; if (!svg) return {status: 'fail', notes: 'No chart rendered.'};
   const table = h.table, spec = table.chart!, dim = spec.dimensions[0], measure = spec.measures[0];
-  const rows = h.original.rows;
+  const rows = independentlyOrderedChart(h.original, measure);
   const chronological = rows.every((r, i) => i === 0 || r[dim] == null || rows[i - 1][dim] == null || String(rows[i - 1][dim]) <= String(r[dim]));
   const segments: number[] = []; let seg = 0; rows.forEach(r => { if (r[measure] == null) { if (seg) segments.push(seg); seg = 0; } else seg++; }); if (seg) segments.push(seg);
   const linePaths = Array.from(svg.querySelectorAll('path')).filter(p => (p.getAttribute('stroke') ?? '').toLowerCase() === FIRST && ['none', 'transparent', ''].includes((p.getAttribute('fill') ?? '').toLowerCase()) && (p.getAttribute('d') ?? '').includes('L') && p.getBBox().width > 40);
@@ -224,29 +224,37 @@ async function measureCheck(h: Harness): Promise<Observation> {
   try {
     select.value = other; select.dispatchEvent(new Event('change', {bubbles: true})); await h.frame(); await sleep(250);
     const svg = svgOf(h) as SVGSVGElement; const labels = texts(svg);
-    const table = h.table; const want = h.original.rows.slice(0, Number(chart(h)!.dataset.shown)).filter(r => r[other] != null).map(r => measureText(table, other, r[other]));
+    const table = h.table; const want = independentlyOrderedChart(h.original, other, Number(chart(h)!.dataset.shown) < h.original.rows.length).slice(0, Number(chart(h)!.dataset.shown)).filter(r => r[other] != null).map(r => measureText(table, other, r[other]));
     const ok = calls === 0 && want.every(x => labels.includes(x)) && select.value === other;
     return result(ok, {measure: other, fetchCalls: 0, valueLabels: want.slice(0, 10)}, {measure: select.value, fetchCalls: calls, found: want.filter(x => labels.includes(x)).length}, 'Changing the chart measure redraws locally with the other measure\'s values; no request leaves the browser.');
   } finally { (window as unknown as {fetch: typeof fetch}).fetch = original; }
 }
 
 async function limitCheck(h: Harness): Promise<Observation> {
-  const c = chart(h); if (!c) return {status: 'fail', notes: 'No chart rendered.'};
-  const table = h.table; const total = Number(c.dataset.total); const exercised = total > 10 && !(table.column_types[table.chart!.dimensions[0]] === 'date');
+  const initial = chart(h); if (!initial) return {status: 'fail', notes: 'No chart rendered.'};
+  const table = h.table, total = Number(initial.dataset.total);
+  const exercised = total > 10 && table.chart!.type === 'bar' && table.column_types[table.chart!.dimensions[0]] !== 'date';
   const before = texts(svgOf(h) as SVGSVGElement);
-  const t = fullTable(h) ?? q(h.root, '[data-testid="result-table"]');
-  let tableReordered = false;
-  if (t) { const numeric = expectedVisible(table).find(col => table.column_types[col] === 'number'); const button = q<HTMLElement>(t, `thead th[data-column="${numeric}"] button`); const first = rows(t)[0]; button?.click(); await h.frame(); if (JSON.stringify(rows(t)[0]) === JSON.stringify(first)) { button?.click(); await h.frame(); } tableReordered = JSON.stringify(rows(t)[0]) !== JSON.stringify(first) || table.rows.length < 2; }
-  const after = texts(svgOf(h) as SVGSVGElement);
-  const stable = JSON.stringify(before) === JSON.stringify(after);
-  let limitOk = true; const limit = q<HTMLElement>(h.root, '[data-testid="chart-limit"]');
+  const dataButton = qa<HTMLButtonElement>(h.root, '[aria-label="Presentation"] button').find(button => button.textContent === 'Data');
+  dataButton?.click(); await h.frame();
+  const t = fullTable(h);
+  const exclusiveData = !!t && !chart(h);
+  const numeric = expectedVisible(table).find(column => table.column_types[column] === 'number');
+  const sortButton = numeric && t ? q<HTMLButtonElement>(t, `thead th[data-column="${numeric}"] button`) : null;
+  sortButton?.click(); await h.frame();
+  const chartButton = qa<HTMLButtonElement>(h.root, '[aria-label="Presentation"] button').find(button => button.textContent === 'Chart');
+  chartButton?.click(); await h.frame(); await sleep(250);
+  const c = chart(h)!;
+  const exclusiveChart = !!c && !fullTable(h);
+  const stable = JSON.stringify(before) === JSON.stringify(texts(svgOf(h) as SVGSVGElement));
+  const limit = q<HTMLElement>(h.root, '[data-testid="chart-limit"]');
+  let limitOk = !exercised ? !limit : Number(c.dataset.shown) === 10 && !!limit && /(Top 10|First 10)/.test(limit.textContent!) && (limit.textContent!.includes('requested order') || limit.textContent!.includes(String(total)));
   if (exercised) {
-    limitOk = Number(c.dataset.shown) === 10 && !!limit && limit.textContent!.includes('Top 10') && limit.textContent!.includes(String(total));
-    const showAll = qa<HTMLButtonElement>(c, 'button').find(b => b.textContent?.startsWith('Show all'));
-    if (showAll) { showAll.click(); await h.frame(); await sleep(100); limitOk = limitOk && Number(c.dataset.shown) === total; showAll.click(); }
-  } else limitOk = !limit;
-  const dateZoom = table.column_types[table.chart!.dimensions[0]] === 'date' && total > 12 ? !!svgOf(h)?.querySelector('[fill="rgba(47,69,84,0)"],[class*="dataZoom"]') || true : true;
-  return result(stable && limitOk && tableReordered && dateZoom, {stableGroups: before.length, limitExercised: exercised, total}, {afterSort: after.length, shown: c.dataset.shown, disclosure: limit?.textContent, tableReordered}, exercised ? `${total} groups: top ten shown with its disclosure, the rest reachable, and the chart unchanged while the table is sorted.` : `${total} groups; the top-ten rule is not exercised by this source (synthetic checks cover it). Chart stability while sorting the table is verified.`);
+    const allButton = qa<HTMLButtonElement>(c, 'button').find(button => button.textContent?.startsWith('Show all'));
+    allButton?.click(); await h.frame(); await sleep(100);
+    limitOk = limitOk && Number(c.dataset.shown) === total;
+  }
+  return result(stable && exclusiveData && exclusiveChart && limitOk, {exclusiveData: true, exclusiveChart: true, stable: true, total}, {exclusiveData, exclusiveChart, stable, limitOk, disclosure: limit?.textContent}, 'Chart and Data are exclusive. Table sorting does not change the chart; top groups are ranked by the selected measure and every returned group is reachable.');
 }
 
 async function resizeCheck(h: Harness): Promise<Observation> {
@@ -263,14 +271,14 @@ async function resizeCheck(h: Harness): Promise<Observation> {
 }
 
 async function metricCheck(h: Harness): Promise<Observation> {
-  const table = h.table; const cards = qa(h.root, '[data-testid="value-cards"] > div');
-  const measures = table.columns.filter(c => MEASURE_LABELS[c]); const row = table.rows[0] ?? {};
-  const wantLabels = measures.map(m => MEASURE_LABELS[m]); const wantValues = measures.map(m => fmtNumber(row[m] ?? null, m === 'amount' || m === 'deal_size' ? 2 : null));
-  const labels = cards.map(c => c.querySelector('dt')!.textContent!.trim()), values = cards.map(c => c.querySelector('dd')!.textContent!.trim());
-  const tableShown = !!q(h.root, '[data-testid="result-table"]'); const metrics = qa(h.root, '[data-testid="metrics"] dd').map(d => d.textContent!.trim());
-  const cur = currency(table); const note = q(h.root, '[data-testid="scope"]')?.parentElement?.textContent ?? '';
-  const ok = JSON.stringify(labels) === JSON.stringify(wantLabels) && JSON.stringify(values) === JSON.stringify(wantValues) && !tableShown && (h.synthetic || metrics.length > 0) && (cur ? true : !/EUR|USD/.test(values.join(' ')));
-  return result(ok, {labels: wantLabels, values: wantValues, currency: cur}, {labels, values, tableShown, metrics, note}, 'Ungrouped aggregate rendered as value cards with independently formatted values; no table, no invented currency.');
+  const table = h.table;
+  const metrics = qa(h.root, '[data-testid="metrics"] > div');
+  const measures = table.columns.filter(column => MEASURE_LABELS[column]);
+  const expected = measures.map(measure => measureText(table, measure, table.rows[0]?.[measure] ?? null));
+  const observed = metrics.map(metric => metric.querySelector('dd')?.textContent?.trim());
+  const singlePresentation = !q(h.root, '[data-testid="value-cards"]') && !q(h.root, '[data-testid="primary-result"] [data-testid="result-table"]') && !q(h.root, '[data-testid="scope"]');
+  const ok = JSON.stringify(observed) === JSON.stringify(expected) && singlePresentation;
+  return result(ok, {values: expected, presentations: 1}, {values: observed, singlePresentation}, 'The scalar has one metric presentation with independently formatted values and units. Supporting records do not repeat the aggregate result.');
 }
 
 async function emptyCheck(h: Harness): Promise<Observation> {
@@ -290,10 +298,10 @@ async function chipsCheck(h: Harness): Promise<Observation> {
     badgesOk = domRows.every((r, i) => { const stage = h.original.rows[i]?.stage; const cell = r.cells[stageIndex]; const badge = cell.querySelector('span'); return stage == null ? cell.textContent!.trim() === '—' : !!badge && badge.textContent!.trim() === String(stage) && (STAGE_GROUP[String(stage)] ? badge.className.includes(`text-${STAGE_GROUP[String(stage)]}`) : true); });
   }
   const quality = q(h.root, '[data-testid="quality"]'); const qualityWarning = table.metadata.warnings.find(w => w.code === 'quality_warning');
-  const qualityOk = qualityWarning ? !!quality && quality.textContent!.includes(qualityWarning.count.toLocaleString()) && quality.textContent!.includes('data checks') : !quality;
+  const qualityOk = qualityWarning ? !!quality && quality.textContent!.includes(qualityWarning.count.toLocaleString()) && /needs? review/.test(quality.textContent!) : !quality;
   const editable = qa(h.root, '[data-testid="filters"] button, [data-testid="filters"] input').length === 0;
   const ok = JSON.stringify(chips) === JSON.stringify(want) && badgesOk && qualityOk && editable && visible.includes('stage');
-  return result(ok, {chips: want, quality: qualityWarning?.count ?? 0}, {chips, badgesOk, qualityOk, editable}, 'Read-only filter chips with business labels, exact stage names with their group colour, and the data-check count with its explanation.');
+  return result(ok, {chips: want, quality: qualityWarning?.count ?? 0}, {chips, badgesOk, qualityOk, editable}, 'Read-only filter chips with business labels, exact stage names with their group colour, and the review count with a discoverable evidence panel.');
 }
 
 async function currencyCheck(h: Harness): Promise<Observation> {
@@ -302,6 +310,15 @@ async function currencyCheck(h: Harness): Promise<Observation> {
   const visible = expectedVisible(table); const money = visible.find(c => MONEY.has(c)); const header = money ? headers(t).find(x => x.column === money)?.text : null;
   const cells = money ? rows(t).map(r => r[headers(t).findIndex(x => x.column === money)]) : [];
   const metrics = qa(h.root, '[data-testid="metrics"] dd').map(d => d.textContent!.trim());
-  const ok = header === `${LABELS[money!]} (${cur})` && cells.every(c => !c.endsWith(' ' + cur)) && !q(h.root, '[data-testid="currency-note"]') && metrics.some(m => m.includes(cur));
-  return result(ok, {header: `${LABELS[money!]} (${cur})`, currency: cur}, {header, sample: cells.slice(0, 5), metrics}, 'The currency of the complete population labels the amount header and the total once; cells carry no repeated code.');
+  const ok = header === `${LABELS[money!]} (${cur})` && cells.every(c => !c.endsWith(' ' + cur)) && !q(h.root, '[data-testid="currency-note"]') && metrics.length === 0;
+  return result(ok, {header: `${LABELS[money!]} (${cur})`, currency: cur}, {header, sample: cells.slice(0, 5), metrics}, 'The currency of the complete population labels the amount header once; cells carry no repeated code.');
+}
+
+/** Independent ordering expectations: exact decimals, deterministic category ties, date gaps retained. */
+function independentlyOrderedChart(table: TablePayload, measure: string, rank = false) {
+  const dimension = table.chart!.dimensions[0];
+  const rows = table.rows.slice();
+  if (table.column_types[dimension] === 'date') return rows.filter(row => row[dimension] != null && Number.isFinite(Date.parse(String(row[dimension])))).sort((a, b) => String(a[dimension]).localeCompare(String(b[dimension])));
+  if (!rank || table.metadata?.sort?.length) return rows;
+  return rows.sort((a, b) => a[measure] == null ? (b[measure] == null ? String(a[dimension]).localeCompare(String(b[dimension])) : 1) : b[measure] == null ? -1 : -decimalCompare(a[measure], b[measure]) || String(a[dimension]).localeCompare(String(b[dimension])));
 }

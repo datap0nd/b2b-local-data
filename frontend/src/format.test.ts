@@ -85,12 +85,20 @@ describe('filter chips and CSV export', () => {
     const types = table().column_types;
     expect(filterText({field: 'stage', operator: 'in', value: ['Won', 'Lost']}, types)).toBe('Stage is one of Won, Lost');
     expect(filterText({field: 'opportunity_amount', operator: 'gt', value: 5000}, types)).toBe('Amount more than 5,000');
-    expect(filterText({field: 'close_date', operator: 'between', value: ['2026-01-01', '2026-12-31']}, types)).toMatch(/^Close date between .*2026 and .*2026$/);
+    expect(filterText({field: 'close_date', operator: 'between', value: ['2026-01-01', '2026-12-31']}, types)).toBe('Closing in 2026');
   });
   it('exports every column with exact values, quoting, and formula guards', () => {
     const t = table({columns: ['opportunity_no', 'comment', 'opportunity_amount'], column_types: {opportunity_no: 'text', comment: 'text', opportunity_amount: 'number'}});
     const csv = csvText(t, [{opportunity_no: '000123', comment: '=SUM(A1) "quoted"', opportunity_amount: '12345678901.55'}, {opportunity_no: '000124', comment: null, opportunity_amount: null}]);
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     expect(csv.slice(1).split('\r\n')).toEqual(['"opportunity_no","comment","opportunity_amount"', '"000123","\'=SUM(A1) ""quoted""","12345678901.55"', '"000124","",""']);
+  });
+  it('preserves signed numeric literals exactly while guarding text, IDs, headers and invalid expressions', () => {
+    const numeric = ['-12.50', '+12.50', '-.50', '-12.', '-1.25e-8', '-1+2', ' -12', '-Infinity', '=SUM(A1)', '@VALUE'];
+    const csv = csvText({columns: ['opportunity_no', 'comment', 'amount', '-12.5'], column_types: {opportunity_no: 'text', comment: 'text', amount: 'number', '-12.5': 'number'}}, numeric.map(amount => ({opportunity_no: '-0012', comment: '-CMD', amount, '-12.5': null})));
+    const lines = csv.slice(1).split('\r\n');
+    expect(lines[0]).toBe('"opportunity_no","comment","amount","\'-12.5"');
+    expect(lines.slice(1, 6)).toEqual(numeric.slice(0, 5).map(value => `"'-0012","'-CMD","${value}",""`));
+    expect(lines.slice(6)).toEqual(numeric.slice(5).map(value => `"'-0012","'-CMD","'${value}",""`));
   });
 });

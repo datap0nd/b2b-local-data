@@ -10,7 +10,7 @@ import re
 
 from reference_evaluator import STAGE_MEMBERS, r_number
 
-SUITE_VERSION = '2.0.0'
+SUITE_VERSION = '3.0.0'
 CURRENCY_FIELDS = ('opp_amount_converted_currency', 'amount_converted_currency')
 PRODUCT_FIELDS = {'product_code', 'pet_name', 'gscm_product_group_new', 'amount_converted_currency', 'sku_amount', 'exported_opp_amount_value_count'}
 # Contract default columns, copied from the published query contract.

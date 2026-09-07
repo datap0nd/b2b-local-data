@@ -16,8 +16,30 @@ from app_config import AppError
 from answer_text import default_suggestions
 from query_engine import QUERY_FIELDS, PlanRejected, merge_plan, supported_suggestions, validate_execution
 from query_models import ResultKind
+from history_store import SavedResultTooLarge
 
 RESULT_CONTRACT_VERSION=2
+SUPPORTING_PREVIEW_ROWS=25
+
+
+def public_supporting(supporting):
+    """An inline preview, never the full frozen evidence attached to storage."""
+    if supporting is None:
+        return None
+    preview=dict(supporting)
+    preview['views']={}
+    for name,table in (supporting.get('views') or {}).items():
+        visible=dict(table,rows=list(table.get('rows') or [])[:SUPPORTING_PREVIEW_ROWS])
+        visible['truncated']=len(visible['rows'])<visible.get('total_rows',0)
+        preview['views'][name]=visible
+    return preview
+
+
+def public_answer_payload(payload):
+    """Apply the public supporting preview bound at HTTP boundaries only."""
+    if 'supporting' not in payload:
+        return payload
+    return dict(payload,supporting=public_supporting(payload['supporting']))
 
 
 def describe_result(plan,table):
@@ -53,6 +75,7 @@ def attach_freshness(table,views,snapshot_at):
     metadata=table.setdefault('metadata',{})
     metadata['freshness']=dict(getattr(views,'freshness',None) or {'status':'unavailable','reason':'No verified update time for this source.'})
     metadata['fingerprint']=getattr(views,'fingerprint',None)
+    metadata['data_contract_version']=getattr(views,'data_contract_version',None)
     metadata['loaded_at']=snapshot_at
     table['snapshot_at']=snapshot_at
     return table
@@ -86,7 +109,14 @@ class QueryService:
 
     def answer_payload(self,plan,views,snapshot_at):
         """Execute a validated plan and build the complete answer: primary table, its variant, and the answer text."""
-        table=attach_freshness(self.executor.execute(views,plan),views,snapshot_at)
+        supporting=None
+        if plan.result_kind==ResultKind.AGGREGATE:
+            table,supporting=self.executor.execute_with_supporting(views,plan)
+            for evidence in supporting['views'].values():
+                attach_freshness(evidence,views,snapshot_at)
+        else:
+            table=self.executor.execute(views,plan)
+        table=attach_freshness(table,views,snapshot_at)
         variants={}
         if plan.result_kind==ResultKind.ROWS:
             other='detail' if table['view']=='summary' else 'summary'
@@ -95,7 +125,10 @@ class QueryService:
             except AppError as error:
                 variants[other]={'error':str(error)}
         answer=compose_answer(table)
-        return {'table':table,'variants':variants,'answer':answer,'contract_version':RESULT_CONTRACT_VERSION}
+        payload={'table':table,'variants':variants,'answer':answer,'contract_version':RESULT_CONTRACT_VERSION}
+        if supporting is not None:
+            payload['supporting']=supporting
+        return payload
 
     def execute_and_save(self,store,owner,session_id,question,plan,views,snapshot_at,model_reply=None,rerun_of=None):
         """Run a plan, record the turn, and save the bounded answer with its provenance. Returns the answer payload."""
@@ -104,10 +137,28 @@ class QueryService:
         response=describe_result(plan,table)
         turn_id=store.append(owner,session_id,question,response,plan,model_reply=model_reply,kind='data')
         saved={'table':store.bounded(table),'variants':{k:(store.bounded(v) if 'rows' in v else v) for k,v in payload['variants'].items()},'answer':payload['answer'],'contract_version':RESULT_CONTRACT_VERSION,'rerun_of':rerun_of}
+        if payload.get('supporting') is not None:
+            # Full canonical supporting rows bypass the ordinary 1,000-row preview
+            # bound. The existing compressed 6 MB per-answer bound still applies.
+            saved['supporting']=payload['supporting']
         try:
             store.save_result(owner,session_id,turn_id,'data',plan,table['metadata'].get('fingerprint'),table['metadata'].get('freshness'),saved)
-        except AppError:
-            pass   # an oversized answer is still shown; it simply cannot be restored later
+        except SavedResultTooLarge:
+            notice=('The complete supporting list is too large to retain with this answer. Only this preview is available; narrow the question to enable full exploration and CSV.'
+                    if payload.get('supporting') is not None else 'This answer is too large to retain with the conversation. Narrow the question to save a restorable result.')
+            payload['save_notice']=notice
+            if payload.get('supporting') is not None:
+                unavailable=public_supporting(payload['supporting'])
+                unavailable.update(available=False,can_rerun=True,message=notice)
+                payload['supporting']=saved['supporting']=unavailable
+            saved['save_notice']=notice
+            try:
+                store.save_result(owner,session_id,turn_id,'data',plan,table['metadata'].get('fingerprint'),table['metadata'].get('freshness'),saved)
+            except SavedResultTooLarge:
+                # The result itself can exceed the bound too. The current answer
+                # explicitly says that evidence was not retained; no full CSV or
+                # exploration is advertised, and the original turn still exists.
+                pass
         return payload|{'turn_id':turn_id,'plan':plan.model_dump(mode='json'),'session_id':session_id,'rerun_of':rerun_of}
 
     def ask(self,store,owner,session_id,question,view,views,snapshot_at,effective_date=None):
