@@ -2,7 +2,7 @@
 
 Ask a locally hosted Qwen model about the Salesforce extract in PostgreSQL. The model produces a validated `QueryPlanV1`; a deterministic engine returns opportunity/SKU tables, metrics, and charts.
 
-Version 0.2 implements the supplied replication manual with a **FastAPI backend and a browser frontend**. Sorting, chart controls, and layout selection stay in the browser. Queries call the backend explicitly; ordinary clicks do not rerun Python. Qwen/model latency and database refresh time remain separate from UI interactions.
+Version 0.3 implements the supplied replication manual with a **FastAPI backend and a browser frontend**, plus a folder-based GitHub installer. Sorting, chart controls, and layout selection stay in the browser. Queries call the backend explicitly; ordinary clicks do not rerun Python. Qwen/model latency and database refresh time remain separate from UI interactions.
 
 ## Current state
 
@@ -10,29 +10,47 @@ The canonical schema, normalization, amount formulas, stage mappings, query cont
 
 ## Install and start on Windows
 
-Download this repository's `setup.ps1` and run:
+Download and extract this repository into the folder you want to use on the work PC. Keep that folder between updates. Copy `.env.example` to `.env` and set `B2B_GITHUB_TOKEN` to a GitHub token with **Contents: read** access to this private repository. You can instead provide it as a process environment variable. SQL and Qwen settings can be filled in when ready; the defaults use fictional demo data.
+
+Run from that folder:
 
 ```powershell
-.\setup.ps1 -InstallDir "$env:LOCALAPPDATA\B2BLocalData"
+.\setup.ps1
+.\start.ps1
 ```
 
-For the private GitHub repository, expose `B2B_GITHUB_TOKEN` to the setup process, or download/extract the repository ZIP in an authenticated browser and run:
+Run the same `setup.ps1` whenever you want to refresh. The default install location is **the folder containing the script**. An explicit `-InstallDir` or `B2B_INSTALL_ROOT` setting can select a different folder. No Git client, administrator rights, pip, Node.js, or system Python installation is needed.
+
+Setup resolves `main` to an exact commit, downloads its complete source archive from GitHub, and stages a clean application copy. It also runs a changed setup script from that revision during the same update. The active code lives under `releases/`, selected by `current.json`; removed code cannot linger in that active copy. Local settings and data remain alongside the launcher.
+
+Python and all 25 library archives are downloaded **from this repository's GitHub release assets**, with SHA-256 verification against the locks. The upstream Python/PyPI URLs in the locks are provenance for maintainers; work-PC setup never uses them. GitHub's download CDN must also be reachable.
+
+- `.downloads/` keeps the exact archives. Only missing, changed, or corrupted archives are downloaded.
+- `runtime/` keeps portable Python and reuses a healthy matching version.
+- `dependencies/` keeps verified, unpacked packages. Unchanged packages are reused; only new or damaged packages are unpacked.
+- Each clean application copy receives its exact dependency set, using local hard links where supported and file copies otherwise. Dependencies removed from the lock do not appear in the refreshed app.
+- `.env`, `business_rules.md`, and `data/` survive updates. Old application releases remain available for rollback.
+
+To install an already-downloaded source revision without fetching `main`, use:
 
 ```powershell
-.\setup.ps1 -LocalSource . -InstallDir "$env:LOCALAPPDATA\B2BLocalData"
+.\setup.ps1 -LocalSource .
 ```
 
-Setup downloads a pinned Python 3.13 x64 ZIP and locked wheels, verifies SHA-256 hashes, and extracts dependencies into the app's own `vendor` folder. It uses no pip, system package installation, Node.js, Git, or executable compilation on the work PC. Pandas/NumPy and Pydantic's native extensions are packaged for that exact Python/Windows ABI; the launcher refuses an incompatible or incomplete release.
+That option still downloads any missing dependencies from GitHub. For an entirely offline installation, add `-Offline` and provide a populated `-DownloadCache`. An authenticated browser download of the source ZIP alone does not contain the dependency archives. Pandas/NumPy and Pydantic's native extensions are packaged for the pinned Python 3.13/Windows x64 ABI; the launcher refuses an incompatible or incomplete release.
 
 Run `start.ps1` in the install folder. The default address is <http://127.0.0.1:8765>. Sample buttons work without SQL or Qwen credentials. A fictional parent amount mismatch is deliberately included so you can see the quality warnings.
 
-For development, use the installed portable interpreter with this checkout's `run_app.py` after running `scripts/vendor_dependencies.py` with that same interpreter. The native dependencies require Windows x64 Python, including x64 emulation on Windows ARM. There is no frontend build step.
+For development, use the installed portable interpreter with this checkout's `run_app.py` after running `scripts/vendor_dependencies.py` with that same interpreter. That maintainer/development command may download from the pinned upstream URLs. Work-PC setup calls it in offline mode after fetching GitHub assets. The native dependencies require Windows x64 Python, including x64 emulation on Windows ARM. There is no frontend build step.
 
 ## Work-PC configuration
 
 Edit `.env` **in the install folder**, not in a versioned release. Environment variables override file settings. Values are literal, optionally quoted; no shell expansion occurs. The file is ordinary local text, ignored by Git, and should use your normal Windows file permissions.
 
+The supplied replication manual explicitly included `.env` configuration and the `PGURL`, `RO_SQL_USER`, `RO_SQL_PW`, `LLM_API_URL`, `LLM_API_KEY`, and `LLM_MODEL_NAME` names used below. It also included the `B2B_DATA_DIR`, `B2B_INSTALL_ROOT`, and identity-header settings. `B2B_GITHUB_TOKEN` is an addition for this private-repository installer and is never sent to SQL or Qwen.
+
 ```dotenv
+B2B_GITHUB_TOKEN=your-github-read-token
 PGURL=your-postgres-host:5432/postgres
 RO_SQL_USER=your-read-only-user
 RO_SQL_PW=your-password
@@ -118,7 +136,9 @@ History is scoped by authenticated identity. The SQL source is shared for this t
 
 ## Updates and rollback
 
-Rerun `setup.ps1` or `update_app.ps1`. `tools/apply_update.ps1` accepts an exact 40-character commit for controlled deployment. Setup stages a separate release, installs its pinned dependencies, runs regression/API checks, verifies the release/configuration, then atomically selects it. Existing `.env`, business rules, and the data/history folder survive updates. Restart the running app to use the new release.
+Rerun `setup.ps1` or `update_app.ps1` from your original install folder. `tools/apply_update.ps1` accepts an exact 40-character commit for controlled deployment. Setup stages a separate release, reuses or downloads its pinned dependencies, runs regression/API checks, verifies the release/configuration, then atomically selects it. Existing `.env`, business rules, and the data/history folder survive updates. Stop the running app with Ctrl+C and run `start.ps1` again to use the new release.
+
+For an existing v0.2 installation, first replace its `setup.ps1` with the current repository copy once. That older bootstrap predates the GitHub asset lock and same-run installer refresh. Subsequent refreshes use the updated script automatically.
 
 Old release directories and `previous.json` are retained. Stop the app, use the portable interpreter to run `updater.py --home <install-folder> --rollback`, then run `start.ps1`. Rollback validates that pointer targets remain inside this installation and never rewrites history. No unattended polling, arbitrary remote execution, or local PyInstaller compilation is required.
 
@@ -128,6 +148,8 @@ Offline installation uses `-LocalSource`, `-Offline`, and `-DownloadCache` conta
 
 `run.py --self-test` runs the test suite with the portable interpreter and app-local vendor packages. `scripts/lock_dependencies.py` is a maintainer-only refresh of explicitly pinned versions, not a runtime resolver. `release_manifest.json` locks the application, query plan, schema, dependency digest, and Python ABI.
 
-CI runs on Windows with the packaged dependencies, checks SQL/Pandas parity against disposable localhost PostgreSQL, exercises a real role with raw-table SELECT access only, and smoke-tests portable installation. Integration tests never use `PGURL`; they require the separate `B2B_TEST_PGURL` setting and refuse non-loopback hosts.
+When changing dependency versions, run `scripts/lock_dependencies.py`, then `scripts/publish_portable_assets.py` on a development machine with an authenticated GitHub CLI. The latter mirrors the original, verified wheels and runtime ZIP to a release named by their combined hashes; it does not rebuild or modify the archives. Publish the assets before promoting the matching code to `main`. Existing assets are checked and skipped. The manual **Publish portable dependency archives** Actions workflow provides the same publishing command. App-only updates can run `scripts/release_metadata.py` to refresh manifest versions without fetching package metadata or creating a new dependency release.
+
+CI runs on Windows with the packaged dependencies, checks SQL/Pandas parity against disposable localhost PostgreSQL, exercises a real role with raw-table SELECT access only, and checks folder installation, offline dependency reuse, clean source replacement, local-data preservation, and rollback. Integration tests never use `PGURL`; they require the separate `B2B_TEST_PGURL` setting and refuse non-loopback hosts.
 
 The source layout follows the manual's backend module boundaries (`app_config`, `data_layer`, `query_models`, `query_engine`, `history_store`, `ui_app`, `updater`). The UI and deployment packaging intentionally use FastAPI/static assets and portable archives, following the architecture discussion. See [remaining integration inputs](docs/intake.md).

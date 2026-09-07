@@ -11,7 +11,7 @@ import sysconfig
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = '0.2.0'
+APP_VERSION = '0.3.0'
 PLAN_VERSION = 1
 SCHEMA_VERSION = 1
 
@@ -129,6 +129,9 @@ def verify_release(root=ROOT, inspect_environment=True):
         digest = hashlib.sha256((root / 'dependencies.lock.json').read_bytes()).hexdigest()
         if manifest.get('dependency_lock_sha256') != digest:
             raise AppError('Release dependency lock differs from its manifest. Rerun setup.ps1.')
+        for name in ('runtime.lock.json','portable_assets.lock.json'):
+            if manifest.get(name.replace('.json','').replace('.','_')+'_sha256') != hashlib.sha256((root/name).read_bytes()).hexdigest():
+                raise AppError('Portable download locks differ from this release. Rerun setup.ps1.')
         packages = json.loads((root / 'dependencies.lock.json').read_text(encoding='utf-8-sig'))['packages']
         locked = {item['name'].lower().replace('_','-'):item['version'] for item in packages}
         if manifest.get('dependencies') != locked:

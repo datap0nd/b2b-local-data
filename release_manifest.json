@@ -1,10 +1,12 @@
 {
-  "app_version": "0.2.0",
+  "app_version": "0.3.0",
   "query_plan_version": 1,
   "database_schema_version": 1,
   "python_tag": "cp313",
   "platform": "win_amd64",
   "dependency_lock_sha256": "198de1854427dbe9e2cc46e07108ec2ea6948402e6363d38cefea6a677a3ee2e",
+  "runtime_lock_sha256": "7e866984d7c4342fe669705360c208556351323c6d83785bfb6cee5874a1a798",
+  "portable_assets_lock_sha256": "7c2685b8a0be041a493999a54fdc55c03bfb4a58a2bd8e089b6dc70728e078cb",
   "dependencies": {
     "pg8000": "1.31.5",
     "scramp": "1.4.17",

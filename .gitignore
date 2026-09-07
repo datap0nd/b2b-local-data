@@ -23,3 +23,7 @@ previous.json
 data/
 .release.json
 .test-postgres/
+releases/
+dependencies/
+vendor.*/
+.setup.lock

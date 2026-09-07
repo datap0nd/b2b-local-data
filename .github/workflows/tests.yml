@@ -24,5 +24,7 @@ jobs:
           B2B_TEST_PGPASSWORD: root # Default password of the disposable hosted runner, not application credentials.
         run: python run.py --self-test
       - name: Portable installation smoke test
+        env:
+          B2B_GITHUB_TOKEN: ${{ github.token }}
         shell: pwsh
-        run: .\setup.ps1 -LocalSource $pwd.Path -InstallDir (Join-Path $env:RUNNER_TEMP 'b2b-install') -DownloadCache (Join-Path $pwd.Path '.downloads')
+        run: .\tests\portable_install.ps1

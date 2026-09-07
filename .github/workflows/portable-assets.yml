@@ -1,0 +1,17 @@
+name: Publish portable dependency archives
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Mirror locked upstream archives, preserving checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_portable_assets.py

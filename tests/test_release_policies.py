@@ -15,7 +15,7 @@ from updater import rollback
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
-        for name in ('release_manifest.json','dependencies.lock.json'):shutil.copyfile(ROOT/name,self.root/name)
+        for name in ('release_manifest.json','dependencies.lock.json','runtime.lock.json','portable_assets.lock.json'):shutil.copyfile(ROOT/name,self.root/name)
     def tearDown(self):self.temp.cleanup()
     def test_supplied_manifest_matches_contract_and_lock(self):verify_release(self.root,False)
     def test_changed_release_values_block_launch(self):
@@ -27,6 +27,13 @@ class ReleaseTests(unittest.TestCase):
     def test_changed_dependency_lock_blocks_launch(self):
         with (self.root/'dependencies.lock.json').open('a') as stream:stream.write(' ')
         with self.assertRaises(AppError):verify_release(self.root,False)
+    def test_changed_portable_locks_block_launch(self):
+        for name in ('runtime.lock.json','portable_assets.lock.json'):
+            with self.subTest(name=name):
+                original=(self.root/name).read_bytes()
+                (self.root/name).write_bytes(original+b' ')
+                with self.assertRaises(AppError):verify_release(self.root,False)
+                (self.root/name).write_bytes(original)
     def test_env_and_manual_names(self):
         (self.root/'.env').write_text('PGURL=database.example:5432/postgres\nRO_SQL_PW="abc#def=$HOME"\nLLM_API_URL=http://127.0.0.1:4002/v1/chat/completions\n')
         with patch.dict('os.environ',{'RO_SQL_PW':'override'},clear=True):

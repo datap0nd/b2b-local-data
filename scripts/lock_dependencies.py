@@ -1,8 +1,11 @@
 """Maintainer-only lock refresh for the declared versions; downloads metadata, never installs."""
-import hashlib
 import json
 from pathlib import Path
+import sys
 from urllib.request import urlopen
+
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from release_metadata import refresh
 
 ROOT=Path(__file__).resolve().parents[1]
 VERSIONS={'pg8000':'1.31.5','scramp':'1.4.17','asn1crypto':'1.5.1','python-dateutil':'2.9.0.post0','six':'1.17.0',
@@ -25,8 +28,5 @@ if __name__=='__main__':
         packages.append({'name':name,'version':version,'filename':wheel['filename'],'url':wheel['url'],'sha256':wheel['digests']['sha256']})
     lock=ROOT/'dependencies.lock.json'
     lock.write_text(json.dumps({'format':2,'platform':'win_amd64','python_tag':'cp313','packages':packages},indent=2)+'\n',encoding='utf-8',newline='\n')
-    manifest={'app_version':'0.2.0','query_plan_version':1,'database_schema_version':1,'python_tag':'cp313','platform':'win_amd64',
-        'dependency_lock_sha256':hashlib.sha256(lock.read_bytes()).hexdigest(),
-        'dependencies':{item['name'].lower().replace('_','-'):item['version'] for item in packages}}
-    (ROOT/'release_manifest.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8',newline='\n')
+    refresh()
     print(f'Locked {len(packages)} packages and the release ABI manifest.')
