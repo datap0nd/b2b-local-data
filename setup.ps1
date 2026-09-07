@@ -207,8 +207,8 @@ try {
         $target = Join-Path $InstallDir $pair[1]
         if (-not (Test-Path -LiteralPath $target)) { Copy-Item -LiteralPath (Join-Path $release $pair[0]) -Destination $target }
     }
-    & $python (Join-Path $release 'run.py') --home $InstallDir --check
-    if ($LASTEXITCODE -ne 0) { throw 'Local configuration check failed; the previous release is still selected.' }
+    $checkOutput = & $python (Join-Path $release 'run.py') --home $InstallDir --check 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { throw "Local configuration check failed; the previous release is still selected. The new release reported: $(($checkOutput -join ' ').Trim()) Fix the named setting in $InstallDir\.env and run setup.ps1 again." }
     [IO.File]::WriteAllText((Join-Path $release '.release.json'), (@{commit=$commit} | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
     $pointer = @{ release=$release; python=$python; commit=$commit; installed_at=[DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
     $pending = Join-Path $InstallDir "current-$installId.json"

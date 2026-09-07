@@ -65,6 +65,15 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)
         self.assertEqual(settings.get('LLM_MODEL_NAME'),'my-qwen');self.assertEqual(settings.postgres['host'],'other.example')
         with patch.dict('os.environ',environment|{'LLM_MODEL_NAME':'env-qwen'},clear=True):self.assertEqual(Settings.load(self.root).get('LLM_MODEL_NAME'),'env-qwen')
+    def test_pghost_shapes_derive_a_valid_pgurl(self):
+        from app_config import derive_pgurl
+        self.assertEqual(derive_pgurl('db.internal'),'db.internal:5432/postgres')
+        self.assertEqual(derive_pgurl('db.internal:6543','',''),'db.internal:6543/postgres')
+        self.assertEqual(derive_pgurl('db.internal','6543','bi'),'db.internal:6543/bi')
+        self.assertEqual(derive_pgurl('postgresql://db.internal:6543/bi'),'db.internal:6543/bi')
+        self.assertEqual(derive_pgurl('db.internal/bi','abc'),'db.internal:5432/bi')
+        for host in ('db.internal:6543','postgresql://db.internal/bi','db.internal/bi/'):
+            with patch.dict('os.environ',{'PGHOST':host,'PGUSER':'u','PGPASSWORD':'p'},clear=True):self.assertEqual(Settings.load(self.root).postgres['host'],'db.internal')
     def test_local_ai_variables_configure_the_model(self):
         environment={'local_ai_endpoint':'http://10.1.2.3:8001/v1','LOCAL_AI_API_KEY':'k2','Local_AI_Model':'my-model','DG_AI_API_URL':'http://ignored:1/v1','DG_AI_MODEL':'gemma'}
         with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)

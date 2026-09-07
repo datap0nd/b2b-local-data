@@ -39,6 +39,21 @@ def read_env(path):
     return values
 
 
+def derive_pgurl(host, port=None, database=None):
+    """host[:port][/database] from the PG* variables, tolerating a host that already carries a port, a path, or a scheme."""
+    host = (host or '').strip()
+    if '://' in host:
+        host = host.split('://', 1)[1]
+    host = host.rstrip('/')
+    database = (database or '').strip().strip('/') or 'postgres'
+    if '/' in host:
+        host, database = host.split('/', 1)[0], host.split('/', 1)[1] or database
+    port = str(port or '').strip()
+    if ':' not in host.replace('[', '').replace(']', '') or host.endswith(']'):
+        host = f"{host}:{port if port.isdigit() else 5432}"
+    return f'{host}/{database}'
+
+
 @dataclass
 class Settings:
     home: Path
@@ -79,7 +94,7 @@ class Settings:
                     derived_endpoint = derived_endpoint or (canonical == 'LLM_API_URL' and old in ('LOCAL_AI_ENDPOINT', 'DG_AI_API_URL'))
                     break
         if not overrides.get('PGURL') and overrides.get('PGHOST'):
-            overrides['PGURL'] = f"{overrides['PGHOST']}:{overrides.get('PGPORT') or 5432}/{overrides.get('PGDATABASE') or 'postgres'}"
+            overrides['PGURL'] = derive_pgurl(overrides['PGHOST'], overrides.get('PGPORT'), overrides.get('PGDATABASE'))
             # The data-governance connection does not verify server certificates; match it unless DB_SSL is set.
             if not overrides.get('DB_SSL'):
                 overrides['DB_SSL'] = 'prefer'
