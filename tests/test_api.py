@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import json
 from pathlib import Path
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -16,35 +17,50 @@ from data_layer import build_canonical_views,demo_rows
 from query_engine import PlannerClient,parse_plan
 from ui_app import create_app
 
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from test_csv_source import fixture_rows,write_export
+
+
+class LocalServer:
+    """One persistent app process per test class, reached over loopback HTTP like the browser does."""
+    def __init__(self,settings,repository=None,planner=None):
+        self.sock=socket.socket();self.sock.bind(('127.0.0.1',0));self.port=self.sock.getsockname()[1]
+        settings.values['APP_PORT']=str(self.port);settings.values.setdefault('B2B_ALLOW_LOCALHOST_IDENTITY','true')
+        self.app=create_app(settings,repository=repository,planner=planner)
+        self.server=uvicorn.Server(uvicorn.Config(self.app,log_level='critical',access_log=False,proxy_headers=False))
+        self.worker=threading.Thread(target=self.server.run,kwargs={'sockets':[self.sock]},daemon=True);self.worker.start()
+        deadline=time.monotonic()+5
+        while not self.server.started and time.monotonic()<deadline:time.sleep(.01)
+        if not self.server.started:raise RuntimeError('Test API failed to start')
+        self.base=f'http://127.0.0.1:{self.port}';self.opener=build_opener(ProxyHandler({}))
+    def stop(self):self.server.should_exit=True;self.worker.join(5);self.sock.close()
+    def request(self,path,body=None,**headers):
+        request=Request(self.base+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'}|headers)
+        with self.opener.open(request,timeout=10) as response:return json.load(response)
+
 
 class ApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp=tempfile.TemporaryDirectory();cls.sock=socket.socket();cls.sock.bind(('127.0.0.1',0))
-        port=cls.sock.getsockname()[1]
-        settings=Settings(Path(cls.temp.name),{'DB_KIND':'demo','APP_PORT':str(port),'B2B_ALLOW_LOCALHOST_IDENTITY':'true'})
-        cls.repository=MagicMock();cls.repository.load.return_value=build_canonical_views(demo_rows())
+        cls.temp=tempfile.TemporaryDirectory()
+        views=build_canonical_views(demo_rows());views.source,views.source_name='demo','fictional demo data'
+        cls.repository=MagicMock();cls.repository.load.return_value=views
         cls.planner=MagicMock();cls.planner.plan.return_value=parse_plan({})
-        cls.app=create_app(settings,repository=cls.repository,planner=cls.planner)
-        cls.server=uvicorn.Server(uvicorn.Config(cls.app,log_level='critical',access_log=False,proxy_headers=False))
-        cls.worker=threading.Thread(target=cls.server.run,kwargs={'sockets':[cls.sock]},daemon=True);cls.worker.start()
-        deadline=time.monotonic()+5
-        while not cls.server.started and time.monotonic()<deadline:time.sleep(.01)
-        if not cls.server.started:raise RuntimeError('Test API failed to start')
-        cls.base=f'http://127.0.0.1:{port}';cls.opener=build_opener(ProxyHandler({}))
+        cls.local=LocalServer(Settings(Path(cls.temp.name),{'DB_KIND':'demo'}),repository=cls.repository,planner=cls.planner)
     @classmethod
-    def tearDownClass(cls):
-        cls.server.should_exit=True;cls.worker.join(5);cls.sock.close();cls.temp.cleanup()
-    def request(self,path,body=None,**headers):
-        request=Request(self.base+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'}|headers)
-        with self.opener.open(request,timeout=10) as response:return json.load(response)
+    def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
+    def request(self,path,body=None,**headers):return self.local.request(path,body,**headers)
     def test_sample_and_saved_query_roundtrip(self):
         result=self.request('/api/sample',{'view':'summary'})
         self.assertEqual(result['table']['rows'][0]['opportunity_amount'],'750')
         saved=self.request('/api/sessions/'+result['session_id'])
         self.assertEqual(saved['active_plan']['grain'],'opportunity')
+        self.assertEqual(saved['turns'][0]['question'],'Preview table (summary) from Fictional sample data.')
         rerun=self.request('/api/rerun',{'session_id':result['session_id']})
         self.assertEqual(rerun['table']['rows'],result['table']['rows'])
+    def test_status_labels_source_and_previews(self):
+        status=self.request('/api/status')
+        self.assertEqual((status['database'],status['source'],status['previews'],status['version']),('demo','Fictional sample data',True,'0.4.0'))
     def test_clarification_never_loads_sql_or_erases_plan(self):
         first=self.request('/api/sample',{'view':'detail'})
         before=self.repository.load.call_count
@@ -52,6 +68,14 @@ class ApiTests(unittest.TestCase):
             reply=self.request('/api/ask',{'question':'recent ones','session_id':first['session_id']})
         self.assertEqual(reply['kind'],'clarify');self.assertEqual(self.repository.load.call_count,before)
         self.assertEqual(self.request('/api/sessions/'+first['session_id'])['active_plan']['grain'],'opportunity_sku')
+    def test_deal_size_vocabulary_and_unknown_fields_in_follow_ups(self):
+        first=self.request('/api/sample',{'view':'summary'})
+        with patch.object(self.planner,'plan',return_value=parse_plan({'context_action':'refine','intent':'metric','dimensions':['first_channel'],'measures':['deal_size'],'remove_filters':['deal_size']})):
+            reply=self.request('/api/ask',{'question':'deal size by channel','session_id':first['session_id']})
+        self.assertEqual(reply['table']['columns'],['first_channel','deal_size'])
+        with patch.object(self.planner,'plan',return_value=parse_plan({'context_action':'refine','remove_filters':['password']})),self.assertRaises(HTTPError) as error:
+            self.request('/api/ask',{'question':'drop it','session_id':first['session_id']})
+        self.assertEqual(error.exception.code,400)
     def test_foreign_origin_and_client_history_rejected(self):
         for body,headers,code in [({'view':'summary'},{'Origin':'https://elsewhere.example'},403),({'question':'hello','history':[]},{},400)]:
             with self.assertRaises(HTTPError) as error:self.request('/api/ask',body,**headers)
@@ -61,8 +85,66 @@ class ApiTests(unittest.TestCase):
         spoofed=self.request('/api/sessions',None,**{'X-Forwarded-User':'someone-else'})
         self.assertEqual(first,spoofed)
     def test_refresh_does_not_call_qwen(self):
-        before=self.planner.plan.call_count;self.request('/api/refresh',{})
+        before=self.planner.plan.call_count;result=self.request('/api/refresh',{})
+        self.assertEqual(self.planner.plan.call_count,before);self.assertEqual(result['source'],'demo')
+
+
+class CsvModeTests(unittest.TestCase):
+    """CSV mode uses the real repository against a synthetic export in the configuration folder."""
+    @classmethod
+    def setUpClass(cls):
+        cls.temp=tempfile.TemporaryDirectory();cls.home=Path(cls.temp.name)
+        (cls.home/'exports').mkdir();write_export(cls.home/'exports/salesforce.csv',fixture_rows())
+        cls.planner=MagicMock();cls.planner.plan.return_value=parse_plan({'intent':'metric','measures':['deal_size','opportunity_count']})
+        cls.local=LocalServer(Settings(cls.home,{'DB_KIND':'csv','B2B_CSV_PATH':'exports/salesforce.csv','B2B_CACHE_SECONDS':'0'}),planner=cls.planner)
+    @classmethod
+    def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
+    def request(self,path,body=None,**headers):return self.local.request(path,body,**headers)
+    def test_status_and_previews_without_qwen(self):
+        status=self.request('/api/status')
+        self.assertEqual((status['database'],status['source'],status['previews']),('csv','CSV file salesforce.csv',True))
+        before=self.planner.plan.call_count
+        summary=self.request('/api/sample',{'view':'summary'})
+        self.assertEqual(summary['table']['source'],'csv');self.assertEqual(summary['table']['source_name'],'salesforce.csv')
+        self.assertEqual(summary['table']['total_rows'],4);self.assertIn('opportunity_amount',summary['table']['columns'])
+        detail=self.request('/api/sample',{'view':'detail','session_id':summary['session_id']})
+        self.assertEqual(detail['table']['total_rows'],5);self.assertEqual(detail['table']['view'],'detail')
+        chart=self.request('/api/sample',{'view':'summary','intent':'chart','session_id':summary['session_id']})
+        self.assertEqual(chart['table']['chart']['type'],'bar')
         self.assertEqual(self.planner.plan.call_count,before)
+        self.assertEqual(self.request('/api/sessions/'+summary['session_id'])['turns'][0]['question'],'Preview table (summary) from CSV file salesforce.csv.')
+    def test_questions_still_use_the_configured_model(self):
+        before=self.planner.plan.call_count
+        reply=self.request('/api/ask',{'question':'total deal size'})
+        self.assertEqual(self.planner.plan.call_count,before+1)
+        self.assertEqual(reply['table']['rows'],[{'deal_size':'1260.50','opportunity_count':4}])
+    def test_refresh_rereads_the_file_and_reports_errors(self):
+        result=self.request('/api/refresh',{})
+        self.assertEqual((result['source'],result['source_name'],result['opportunities'],result['skus']),('csv','salesforce.csv',4,5))
+        path=self.home/'exports/salesforce.csv';original=path.read_bytes()
+        try:
+            write_export(path,fixture_rows()[:3])
+            self.assertEqual(self.request('/api/refresh',{})['opportunities'],1)
+            path.write_text('broken header only\n',encoding='utf-8')
+            with self.assertRaises(HTTPError) as error:self.request('/api/refresh',{})
+            self.assertEqual(error.exception.code,400);self.assertIn('missing required Salesforce columns',json.load(error.exception)['error'])
+        finally:path.write_bytes(original)
+        self.assertEqual(self.request('/api/refresh',{})['opportunities'],4)
+
+
+class PostgresModeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp=tempfile.TemporaryDirectory()
+        repository=MagicMock();repository.load.return_value=build_canonical_views(demo_rows())
+        cls.local=LocalServer(Settings(Path(cls.temp.name),{'DB_KIND':'postgres','PGURL':'database.example:5432/postgres','B2B_CSV_PATH':'ignored.csv'}),repository=repository,planner=MagicMock())
+    @classmethod
+    def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
+    def test_previews_are_not_offered_for_the_shared_database(self):
+        status=self.local.request('/api/status')
+        self.assertEqual((status['database'],status['source'],status['previews']),('postgres','PostgreSQL bi_reporting.b2b_project',False))
+        with self.assertRaises(HTTPError) as error:self.local.request('/api/sample',{'view':'summary'})
+        self.assertEqual(error.exception.code,400)
 
 
 class PlannerProtocolTests(unittest.TestCase):
@@ -81,5 +163,7 @@ class PlannerProtocolTests(unittest.TestCase):
                 settings=Settings(Path('.'),{'AI_PROVIDER':provider,'LLM_MODEL_NAME':'test-qwen','LLM_API_URL':f'http://127.0.0.1:{server.server_address[1]}'+suffix,'RO_SQL_PW':'db-secret','LLM_API_KEY':'model-secret'})
                 self.assertEqual(PlannerClient(settings).plan('Show deals',[]).intent.value,'table')
                 self.assertEqual(captured[-1][0],suffix)
-                self.assertNotIn('db-secret',json.dumps(captured[-1][1]));self.assertNotIn('model-secret',json.dumps(captured[-1][1]))
+                prompt=json.dumps(captured[-1][1])
+                self.assertNotIn('db-secret',prompt);self.assertNotIn('model-secret',prompt)
+                for word in ('deal_size','first_channel','deal_size_on_pricing_date_usd','once per opportunity'):self.assertIn(word,prompt)
         finally:server.shutdown();server.server_close();worker.join()

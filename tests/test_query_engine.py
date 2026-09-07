@@ -3,7 +3,8 @@ import unittest
 
 from app_config import AppError
 from data_layer import build_canonical_views,demo_rows
-from query_engine import QueryExecutor,merge_plan,parse_plan
+from query_engine import QUERY_FIELDS,QueryExecutor,merge_plan,parse_plan
+from query_models import Measure
 
 
 class QueryEngineTests(unittest.TestCase):
@@ -95,3 +96,61 @@ class QueryEngineTests(unittest.TestCase):
         rows=demo_rows();rows[-1]['opp_amount_converted_currency']='USD';self.views=build_canonical_views(rows)
         with self.assertRaises(AppError):self.execute(intent='metric',measures=['amount'])
         self.assertEqual(self.execute(intent='metric',dimensions=['opp_amount_converted_currency'],measures=['amount'])['total_rows'],2)
+
+    def test_added_attributes_select_filter_and_sort_at_both_grains(self):
+        columns=['first_channel','age','comment','deal_size_on_pricing_date_usd']
+        for grain,keys in [('opportunity',['opportunity_no']),('opportunity_sku',['opportunity_no','product_code'])]:
+            result=self.execute(grain=grain,dimensions=columns,sort=[{'field':'age','direction':'asc'}])
+            self.assertEqual(result['columns'],keys+columns)
+            self.assertEqual([row['age'] for row in result['rows']][:2],['12','30'])
+            self.assertEqual(result['column_types']['age'],'number');self.assertEqual(result['column_types']['comment'],'text')
+        self.assertEqual([r['opportunity_no'] for r in self.execute(filters=[{'field':'first_channel','operator':'eq','value':'Direct'}])['rows']],['OPP-002'])
+        self.assertEqual(self.execute(filters=[{'field':'comment','operator':'contains','value':'fictional'}])['total_rows'],3)
+        self.assertEqual(self.execute(filters=[{'field':'age','operator':'between','value':[10,40]}])['total_rows'],2)
+        self.assertEqual(self.execute(grain='opportunity_sku',filters=[{'field':'deal_size_on_pricing_date_usd','operator':'gt','value':700}])['total_rows'],3)
+        self.assertEqual(self.execute(filters=[{'field':'deal_size','operator':'ge','value':'2400'}])['total_rows'],1)
+
+    def test_age_is_reported_not_summed(self):
+        self.assertNotIn('age',{m.value for m in Measure})
+        rows=demo_rows();rows[1]['age']='99'
+        self.views=build_canonical_views(rows)
+        self.assertEqual(self.execute(dimensions=['age'])['rows'][0]['age'],'30')
+        with self.assertRaises(AppError):self.execute(intent='metric',measures=['age'])
+
+    def test_deal_size_counts_once_per_opportunity(self):
+        self.assertEqual(self.execute(intent='metric',measures=['deal_size'])['rows'],[{'deal_size':'3650'}])
+        self.assertEqual(self.execute(grain='opportunity_sku',intent='metric',measures=['deal_size','amount','opportunity_count'])['rows'],[{'deal_size':'3650','amount':'3600','opportunity_count':3}])
+        grouped=self.execute(grain='opportunity_sku',intent='chart',chart_type='bar',dimensions=['stage_group'],measures=['deal_size'])
+        self.assertEqual({row['stage_group']:row['deal_size'] for row in grouped['rows']},{'Won':'1250','Open':'2400'})
+        by_channel=self.execute(intent='metric',dimensions=['first_channel'],measures=['deal_size','amount'])
+        self.assertEqual({row['first_channel']:(row['deal_size'],row['amount']) for row in by_channel['rows']},{'Partner':('3150','3150'),'Direct':('500','450')})
+
+    def test_deal_size_with_product_filters_selects_matching_opportunities(self):
+        filters=[{'field':'product_code','operator':'eq','value':'SKU-B'}]
+        self.assertEqual(self.execute(intent='metric',filters=filters,measures=['deal_size'])['rows'],[{'deal_size':'1250'}])
+        self.assertEqual(self.execute(grain='opportunity_sku',intent='metric',filters=filters,measures=['deal_size','amount'])['rows'],[{'deal_size':'1250','amount':'600'}])
+        table=self.execute(measures=['deal_size'],filters=filters,dimensions=['opportunity_no'])
+        self.assertEqual([(row['opportunity_no'],row['deal_size']) for row in table['rows']],[('OPP-001','750'),('OPP-002','500')])
+
+    def test_deal_size_rejects_product_breakdowns_and_sku_tables(self):
+        for values in [{'intent':'metric','dimensions':['product_code'],'measures':['deal_size']},
+                       {'intent':'chart','chart_type':'bar','grain':'opportunity_sku','dimensions':['pet_name'],'measures':['deal_size']},
+                       {'intent':'metric','grain':'opportunity_sku','dimensions':['stage_group','gscm_product_group_new'],'measures':['deal_size']},
+                       {'grain':'opportunity_sku','measures':['deal_size']}]:
+            with self.subTest(values=values),self.assertRaises(AppError) as error:self.execute(**values)
+            self.assertIn('Deal size',str(error.exception))
+        self.assertEqual(self.execute(grain='opportunity_sku',intent='metric',dimensions=['product_code'],measures=['amount'])['total_rows'],3)
+
+    def test_deal_size_ignores_mixed_currency_rule_and_null_values(self):
+        rows=demo_rows();rows[-1]['opp_amount_converted_currency']='USD';rows[-1]['deal_size_on_pricing_date_usd']=None
+        self.views=build_canonical_views(rows)
+        self.assertEqual(self.execute(intent='metric',measures=['deal_size','opportunity_count'])['rows'],[{'deal_size':'1250','opportunity_count':3}])
+        with self.assertRaises(AppError):self.execute(intent='metric',measures=['amount','deal_size'])
+
+    def test_older_plans_and_refinements_remain_valid(self):
+        legacy='{"version":1,"intent":"metric","context_action":"replace","grain":"opportunity","filters":[{"field":"stage","operator":"eq","value":"Won"}],"remove_filters":[],"dimensions":["stage_group"],"measures":["amount","opportunity_count"],"sort":[],"limit":null,"chart_type":null,"clarification":null,"suggestions":[]}'
+        plan=parse_plan(legacy)
+        self.assertEqual(self.executor.execute(self.views,plan)['rows'],[{'stage_group':'Won','amount':'1200','opportunity_count':2}])
+        refined=merge_plan(plan,parse_plan({'context_action':'refine','measures':['deal_size'],'remove_filters':['stage']}))
+        self.assertEqual(self.executor.execute(self.views,refined)['rows'],[{'stage_group':'Open','deal_size':'2400'},{'stage_group':'Won','deal_size':'1250'}])
+        self.assertTrue({'deal_size','amount','stage_group','first_channel','comment'}<=QUERY_FIELDS)

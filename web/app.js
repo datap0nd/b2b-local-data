@@ -54,7 +54,7 @@ function drawRows() {
 function renderTable(table) {
   currentTable=table; sortState={}; $('result').hidden=false; $('table').replaceChildren(); $('rerun').hidden=false;
   $('result-title').textContent=table.intent==='table'?(table.grain==='opportunity'?'Opportunity summary':'Opportunity & product detail'):'Grouped metrics';
-  $('result-meta').textContent=`${table.rows.length.toLocaleString()} of ${table.total_rows.toLocaleString()} rows · ${table.source_rows.toLocaleString()} source lines · loaded ${new Date(table.snapshot_at).toLocaleTimeString()}${table.truncated?' · Preview limited; CSV includes displayed rows only':''}`;
+  $('result-meta').textContent=`${table.rows.length.toLocaleString()} of ${table.total_rows.toLocaleString()} rows · ${table.source_rows.toLocaleString()} source lines · ${table.source_name||table.source} · loaded ${new Date(table.snapshot_at).toLocaleTimeString()}${table.truncated?' · Preview limited; CSV includes displayed rows only':''}`;
   $('scope').textContent=table.scope;
   $('warnings').replaceChildren(); table.warnings.forEach(text=>{const p=document.createElement('p');p.className='warning';p.textContent=text;$('warnings').append(p);});
   const head=$('table').createTHead().insertRow();
@@ -109,7 +109,7 @@ async function handleResult(result) {
 }
 async function submit(sample) {
   if(busy)return;const question=$('question').value.trim();if(!sample&&!question)return;
-  setBusy(true,sample?'Building result…':'Asking Qwen…');message(sample?`Show fictional ${sample.intent||'table'} (${sample.view}).`:question,'user');
+  setBusy(true,sample?'Building result…':'Asking Qwen…');message(sample?`Preview ${sample.intent||'table'} (${sample.view}).`:question,'user');
   try{const body=sample?{...sample,session_id:sessionId}:{question,session_id:sessionId,view:$('view').value};await handleResult(await api(sample?'/api/sample':'/api/ask',body));}
   catch(error){message(error.message,'error');}finally{setBusy(false);}
 }
@@ -120,7 +120,7 @@ document.querySelectorAll('.sample').forEach(b=>b.addEventListener('click',()=>s
 $('reset').addEventListener('click',async()=>{try{await newSession();}catch(e){message(e.message,'error');}});
 $('session-picker').addEventListener('change',async()=>{try{await loadSession($('session-picker').value);}catch(e){message(e.message,'error');}});
 $('rerun').addEventListener('click',async()=>{if(busy)return;setBusy(true,'Running saved query…');try{await handleResult(await api('/api/rerun',{session_id:sessionId}));}catch(e){message(e.message,'error');}finally{setBusy(false);}});
-$('refresh').addEventListener('click',async()=>{if(busy)return;setBusy(true,'Refreshing data…');try{const result=await api('/api/refresh',{});message(`Data refreshed: ${result.opportunities.toLocaleString()} opportunities and ${result.skus.toLocaleString()} opportunity/SKU rows. Run the saved query to update its table.`);}catch(e){message(e.message,'error');}finally{setBusy(false);}});
+$('refresh').addEventListener('click',async()=>{if(busy)return;setBusy(true,'Refreshing data…');try{const result=await api('/api/refresh',{});message(`Data refreshed from ${result.source_name||result.source}: ${result.opportunities.toLocaleString()} opportunities and ${result.skus.toLocaleString()} opportunity/SKU rows. Run the saved query to update its table.`);}catch(e){message(e.message,'error');}finally{setBusy(false);}});
 $('export').addEventListener('click',()=>{
   if(!currentTable)return;
   const cell=value=>{let text=value==null?'':String(value);if(/^[\s]*[=+\-@\t\r]/.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';};
@@ -128,6 +128,7 @@ $('export').addEventListener('click',()=>{
   const url=URL.createObjectURL(new Blob(['\uFEFF'+rows.map(row=>row.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));
   const link=document.createElement('a');link.href=url;link.download=`b2b-${currentTable.grain}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
-(async()=>{try{const status=await api('/api/status');$('status').textContent=`${status.database==='demo'?'Fictional sample data':'PostgreSQL configured'} · Qwen: ${status.model} · v${status.version}`;$('samples').hidden=status.database!=='demo';
+(async()=>{try{const status=await api('/api/status');$('status').textContent=`${status.source} · Qwen: ${status.model} · v${status.version}`;$('samples').hidden=!status.previews;
+  $('samples-label').textContent=status.database==='csv'?'Preview the CSV file without Qwen':'Try the fictional dataset';
   if(sessionId){try{await loadSession(sessionId);}catch{sessionId=null;}}if(!sessionId)await newSession();else await listSessions();
 }catch(e){$('status').textContent='Could not connect to the app.';message(e.message,'error');}})();

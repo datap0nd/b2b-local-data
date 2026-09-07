@@ -12,7 +12,7 @@
       <textarea id="question" maxlength="4000" rows="3" placeholder="Show Alex’s opportunities closing in October, with products combined." required></textarea>
       <div class="actions"><label class="layout">Table layout <select id="view"><option value="auto">Ask Qwen to choose</option><option value="summary">Summary · per opportunity</option><option value="detail">Detail · per opportunity + SKU</option></select></label><button id="ask" type="submit">Ask Qwen <span aria-hidden="true">↗</span></button></div>
     </form>
-    <div id="samples" hidden><span>Try the fictional dataset</span><button class="quiet sample data-action" data-view="summary">Summary table</button><button class="quiet sample data-action" data-view="detail">Detailed table</button><button class="quiet sample data-action" data-view="summary" data-intent="chart">Amounts by stage</button></div>
+    <div id="samples" hidden><span id="samples-label">Try the fictional dataset</span><button class="quiet sample data-action" data-view="summary">Summary table</button><button class="quiet sample data-action" data-view="detail">Detailed table</button><button class="quiet sample data-action" data-view="summary" data-intent="chart">Amounts by stage</button></div>
   </section>
   <div class="conversation-top"><label for="session-picker">Conversation</label><select id="session-picker" aria-label="Saved conversations"></select><button id="rerun" class="quiet data-action" hidden>Run saved query</button><button id="reset" class="quiet data-action">New conversation</button></div>
   <div id="conversation" aria-live="polite"><p class="empty">Qwen will ask a follow-up when your question needs more detail.</p></div>

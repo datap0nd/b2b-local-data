@@ -70,6 +70,8 @@ class Measure(str, Enum):
     QUANTITY = 'quantity'
     SKU_COUNT = 'sku_count'
     OPPORTUNITY_COUNT = 'opportunity_count'
+    # Added in 0.4: sum of deal_size_on_pricing_date_usd, counted once per opportunity.
+    DEAL_SIZE = 'deal_size'
 
 
 class QueryPlanV1(ContractModel):

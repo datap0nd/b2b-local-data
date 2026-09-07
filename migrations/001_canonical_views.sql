@@ -1,3 +1,7 @@
+-- LEGACY DOCUMENTATION (versions 0.2-0.3). Since 0.4.0 the application reads the raw table
+-- directly and builds both grains with its own parser, which also covers the four columns added
+-- later (1st_channel, age, comment, deal_size_on_pricing_date_usd). Nothing reads these views or
+-- the version ledger any more; the file documents the original SQL rules only.
 -- Based on the supplied replication manual. Run manually with a migration role.
 -- Invalid dates become NULL; C collation keeps text min/ordering equal to Python.
 BEGIN;

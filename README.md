@@ -1,12 +1,12 @@
 # B2B Salesforce Query Agent
 
-Ask a locally hosted Qwen model about the Salesforce extract in PostgreSQL. The model produces a validated `QueryPlanV1`; a deterministic engine returns opportunity/SKU tables, metrics, and charts.
+Ask a locally hosted Qwen model about the Salesforce extract in PostgreSQL, or about a local CSV export of the same extract during development. The model produces a validated `QueryPlanV1`; a deterministic engine returns opportunity/SKU tables, metrics, and charts.
 
-Version 0.3 implements the supplied replication manual with a **FastAPI backend and a browser frontend**, plus a folder-based GitHub installer. Sorting, chart controls, and layout selection stay in the browser. Queries call the backend explicitly; ordinary clicks do not rerun Python. Qwen/model latency and database refresh time remain separate from UI interactions.
+Version 0.4 reads all **30 Salesforce columns** with one shared parser from either the raw PostgreSQL table or a local CSV file. Version 0.3 implemented the supplied replication manual with a **FastAPI backend and a browser frontend**, plus a folder-based GitHub installer. Sorting, chart controls, and layout selection stay in the browser. Queries call the backend explicitly; ordinary clicks do not rerun Python. Qwen/model latency and data refresh time remain separate from UI interactions.
 
 ## Current state
 
-The canonical schema, normalization, amount formulas, stage mappings, query contract, local history, and database fallback are implemented. Tests use fictional data and a disposable PostgreSQL instance in CI. The work PC's actual database and Qwen endpoint still need a configured connection test. No credentials from the supplied manual are committed.
+The canonical 30-column schema, normalization, amount formulas, stage mappings, query contract, local history, CSV development source, and raw-table PostgreSQL source are implemented. Tests use invented fixtures and a disposable PostgreSQL instance in CI; the supplied sample export stays local and is checked only by an opt-in test. The work PC's actual database and Qwen endpoint still need a configured connection test. No credentials from the supplied manual are committed.
 
 ## Install and start on Windows
 
@@ -68,6 +68,10 @@ APP_PORT=8765
 
 A blank `DB_KIND` selects PostgreSQL when `PGURL` is present, otherwise fictional demo data. `DB_KIND=demo` explicitly stays in demo mode. The old `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` and `AI_*` settings are accepted for existing installations; set `DB_KIND=postgres` with old database variables.
 
+For development against a local export, set `DB_KIND=csv` and `B2B_CSV_PATH` explicitly. A relative path resolves from the folder containing `.env`; an absolute local path is accepted as is. `B2B_CSV_ENCODING` defaults to `utf-8-sig`. A missing, unreadable, malformed, or incomplete file stops the request with a message naming the file or the missing columns. CSV mode is never selected automatically, and a PostgreSQL failure never falls back to a CSV file or to demo data. Keep exports, copies, and result downloads in the install folder or another local place; `*.csv` and `*.xlsx` are Git-ignored, and the sample export must not be committed.
+
+In demo and CSV modes the **Summary table**, **Detailed table**, and **Amounts by stage** buttons build fixed previews locally without calling Qwen. Natural-language questions still use the configured local model in every mode. The status line and each result name the actual source: fictional data, the CSV file name, or the PostgreSQL raw table.
+
 Both complete `/v1/chat/completions` URLs and base URLs ending in `/v1` work. For Ollama, set `AI_PROVIDER=ollama`, its local URL in `LLM_API_URL`, and the exact installed model name. Internal servers using a public-range address require that exact hostname/IP in `B2B_LLM_ALLOWED_HOSTS`. This supports corporate routing without broadly allowing public endpoints. The operator must ensure the endpoint really hosts the local model. Redirects and HTTP proxy forwarding are disabled for model requests; there is no Gemini/cloud fallback.
 
 SQL uses certificate validation by default. If needed, point `DB_CA_FILE` to an internal CA certificate. The application uses a read-only transaction, a statement timeout, and a maximum row bound. Its credentials need SELECT access, not migration privileges.
@@ -76,20 +80,22 @@ SQL uses certificate validation by default. If needed, point `DB_CA_FILE` to an 
 
 ## Data contract
 
-The expected raw source is `bi_reporting.b2b_project`, using the exact columns in the supplied manual. To change relation names, use `B2B_RAW_TABLE`, `B2B_SKU_VIEW`, `B2B_OPPORTUNITY_VIEW`, and `B2B_SCHEMA_VERSION_TABLE`. Each uses `schema.relation` notation.
+The expected raw source is `bi_reporting.b2b_project` (`B2B_RAW_TABLE`, in `schema.relation` notation) holding the 30 extract columns as text. The application reads that table directly in a read-only transaction with the statement timeout and row cap, resolves its column names, and builds both grains with the same code that reads a CSV file. The two derived views and the version ledger from earlier releases are no longer read; [migrations/001_canonical_views.sql](migrations/001_canonical_views.sql) stays as legacy documentation of the original SQL rules only.
+
+Canonical field names are lower snake_case identifiers. Each equals its PostgreSQL column name except `first_channel`, which maps to the column `1st_channel` (an identifier that must be quoted in SQL). Column names from either source are normalized (lowercase, punctuation and spaces become `_`) and matched against the canonical names, the SQL names, and a short manual alias table, so export headers such as `Opportunity No.`, `Subsidiary: Subsidiary Code`, `1st Channel`, or `Deal Size on Pricing Date (USD)` resolve without configuration. A source missing any of the 30 fields, or supplying two columns for the same field, is rejected with the field names listed. Extra columns are ignored.
+
+The four columns added in 0.4 are opportunity attributes available in both layouts: `first_channel`, `age`, `comment`, and `deal_size_on_pricing_date_usd`. They are selected deterministically (MIN) like other metadata, never summed. `age` is the supplied value and is never recalculated. Differing values within an opportunity/SKU group or across an opportunity's SKU rows set `has_quality_warning` without dropping rows.
 
 | Grain | Key | Amount |
 | --- | --- | --- |
 | SKU | `opportunity_no`, `product_code` | Sum of `amount_converted` for that pair |
 | Opportunity | `opportunity_no` | Sum of its canonical SKU amounts |
 
-Text follows the supplied PostgreSQL `btrim` behavior: surrounding spaces are removed, empty strings become null. Numeric strings must match the manual's decimal pattern; malformed values become null. Probability is divided by 100, with an optional `%` suffix. Raw dates use `DD/MM/YYYY`; invalid calendar dates become null in both paths.
+All source values are loaded as text, so identifiers such as `000123` or `1E3` are preserved exactly. Text follows the supplied PostgreSQL `btrim` behavior: surrounding spaces are removed, empty strings become null. Numeric strings must match the manual's decimal pattern and are converted to exact decimals; malformed values become null. Probability is divided by 100, with an optional `%` suffix. Raw dates are day-first `D/M/YYYY` with padded or unpadded day and month; invalid calendar dates become null in both paths.
 
 SQL-style reductions ignore null inputs. A sum with only null inputs stays null. Exported parent opportunity amounts are retained as min/max checks, never added as a measure. Amount discrepancy is true when the parent min/max differ, when the required comparison is unknown, or when the SKU total differs from the parent by more than 0.01. Metadata conflicts use the manual's specified quality fields, deterministic MIN/MAX selection, and visible warnings. These flags do not stop the table.
 
-The optional [canonical-view migration](migrations/001_canonical_views.sql) creates the two views and the version ledger. Apply it manually with a migration-capable role; the app and installer do not run DDL against the work database. It uses guarded date parsing and explicit C collation so the local and SQL paths agree on invalid dates and text ordering.
-
-The repository reads both views within one repeatable-read snapshot. Missing or denied views/version metadata cause a savepoint rollback and reconstruction from the raw table. Connection failures, timeouts, incompatible schema versions, missing columns, and oversized results stop the request rather than being hidden by fallback. The source cap defaults to 100,000 rows; partial inputs are never reported as complete totals.
+No database migration is required for 0.4; the app and installer never run DDL against the work database, and the read-only role needs SELECT on the raw table only. Connection failures, timeouts, missing columns, and oversized results stop the request rather than being hidden by fallback. The source cap defaults to 100,000 rows for both PostgreSQL and CSV; partial inputs are never reported as complete totals.
 
 The source must contain the intended current extract. No historical snapshot de-duplication is invented. Rows without an opportunity number or product code are excluded, as in the supplied SQL.
 
@@ -100,11 +106,13 @@ The Pydantic contract forbids unknown fields and supports:
 - Intents: table, metric, chart, clarify.
 - Grains: opportunity and opportunity_sku.
 - Filters: eq, ne, gt, ge, lt, le, contains, in, between. Filters are ANDed.
-- Measures: amount, quantity, sku_count, opportunity_count.
+- Measures: amount, quantity, sku_count, opportunity_count, deal_size.
 - Up to ten selected/grouping dimensions, three sort fields, and a 1,000-row result preview.
 - Bar, line, area, and scatter charts, with exact values also available in a table.
 
 For **tables**, dimensions select columns and business keys remain included. For **metrics/charts**, dimensions group rows. Opportunity count counts distinct opportunity identifiers even at SKU grain. SKU count counts opportunity/SKU pairs, not globally distinct product codes. Mixed-currency amount metrics require a currency grouping or filter.
+
+`deal_size` sums `deal_size_on_pricing_date_usd` once per opportunity, in USD, at either grain. It supports totals and groupings by opportunity-level fields such as `stage_group`, `opportunity_owner`, or `first_channel`; a product filter selects the matching opportunities and still counts each once. A deal-size breakdown by product fields, or a deal-size measure in the per-SKU detail table, is rejected by the engine, and the planner is instructed to ask a clarification instead; product breakdowns use `amount`. Plans saved by earlier releases remain valid.
 
 Filters run on canonical rows after aggregation. An opportunity-grain product filter selects complete matching opportunities, including all their SKU values. SKU grain computes values only for the matching SKU rows. Ambiguous scope should produce a clarification. Date filters use `YYYY-MM-DD`; probability filters use fractions such as `0.75`.
 
@@ -146,10 +154,12 @@ Offline installation uses `-LocalSource`, `-Offline`, and `-DownloadCache` conta
 
 ## Development and validation
 
-`run.py --self-test` runs the test suite with the portable interpreter and app-local vendor packages. `scripts/lock_dependencies.py` is a maintainer-only refresh of explicitly pinned versions, not a runtime resolver. `release_manifest.json` locks the application, query plan, schema, dependency digest, and Python ABI.
+`run.py --self-test` runs the test suite with the portable interpreter and app-local vendor packages. `scripts/lock_dependencies.py` is a maintainer-only refresh of explicitly pinned versions, not a runtime resolver. `release_manifest.json` locks the application version, query plan version, the app's canonical data schema version (`data_schema_version`, 2 for the 30-column schema), dependency digest, and Python ABI. No database version ledger is consulted. Version 0.4 changes no dependencies, so existing portable archives are reused and updates keep local configuration and data.
 
 When changing dependency versions, run `scripts/lock_dependencies.py`, then `scripts/publish_portable_assets.py` on a development machine with an authenticated GitHub CLI. The latter mirrors the original, verified wheels and runtime ZIP to a release named by their combined hashes; it does not rebuild or modify the archives. Publish the assets before promoting the matching code to `main`. Existing assets are checked and skipped. The manual **Publish portable dependency archives** Actions workflow provides the same publishing command. App-only updates can run `scripts/release_metadata.py` to refresh manifest versions without fetching package metadata or creating a new dependency release.
 
-CI runs on Windows with the packaged dependencies, checks SQL/Pandas parity against disposable localhost PostgreSQL, exercises a real role with raw-table SELECT access only, and checks folder installation, offline dependency reuse, clean source replacement, local-data preservation, and rollback. Integration tests never use `PGURL`; they require the separate `B2B_TEST_PGURL` setting and refuse non-loopback hosts.
+CI runs on Windows with the packaged dependencies, checks that an all-text raw table in disposable localhost PostgreSQL and an equivalent CSV file produce identical tables and totals, exercises a real role with raw-table SELECT access only, and checks folder installation, offline dependency reuse, clean source replacement, local-data preservation, and rollback. Integration tests never use `PGURL`; they require the separate `B2B_TEST_PGURL` setting and refuse non-loopback hosts. All committed fixtures are invented; the suite passes without the supplied sample.
+
+To check the supplied sample export on a machine that holds it, set `B2B_SAMPLE_CSV_PATH` (and `B2B_SAMPLE_CSV_ENCODING` if needed) before `run.py --self-test`. That opt-in test expects 307 input rows to produce 112 opportunities and 305 opportunity/SKU rows. The file itself stays local and Git-ignored.
 
 The source layout follows the manual's backend module boundaries (`app_config`, `data_layer`, `query_models`, `query_engine`, `history_store`, `ui_app`, `updater`). The UI and deployment packaging intentionally use FastAPI/static assets and portable archives, following the architecture discussion. See [remaining integration inputs](docs/intake.md).

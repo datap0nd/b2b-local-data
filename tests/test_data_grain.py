@@ -2,7 +2,19 @@ from datetime import date
 from decimal import Decimal
 import unittest
 
-from data_layer import build_canonical_views, clean_date, clean_number, demo_rows
+from app_config import AppError
+from data_layer import (OPPORTUNITY_COLUMNS, RAW_COLUMNS, SKU_COLUMNS, SOURCE_FIELDS, SQL_COLUMNS, build_canonical_views, clean_date,
+                        clean_number, demo_rows, resolve_columns)
+
+# Salesforce-style export headers for every canonical field, in the export's own spelling.
+EXPORT_HEADERS = {'opportunity_no':'Opportunity No.','product_code':'Product Code','subsidiary_subsidiary_code':'Subsidiary: Subsidiary Code',
+    'opportunity_name':'Opportunity Name','end_customer':'End Customer','gscm_product_group_new':'GSCM Product Group (New)','pet_name':'PET Name',
+    'stage':'Stage','opportunity_owner':'Opportunity Owner','biz_focus':'Biz Focus','business_location':'Business Location','division':'Division',
+    'sales_type_detail':'Sales Type Detail','type':'Type','amount_converted_currency':'Amount (converted) Currency',
+    'opp_amount_converted_currency':'Opportunity Amount (converted) Currency','rollout_period_to':'Rollout Period To','rollout_period_from':'Rollout Period From',
+    'first_channel':'1st Channel','comment':'Comment','quantity':'Quantity','amount_converted':'Amount (converted)','opp_amount_converted':'Opportunity Amount (converted)',
+    'probability':'Probability (%)','age':'Age','deal_size_on_pricing_date_usd':'Deal Size on Pricing Date (USD)','close_month':'Close Month','close_date':'Close Date',
+    'created_date':'Created Date','last_modified_date':'Last Modified Date'}
 
 
 class DataGrainTests(unittest.TestCase):
@@ -48,6 +60,7 @@ class DataGrainTests(unittest.TestCase):
         self.assertEqual(clean_number(' 75% ',True),Decimal('.75'))
         self.assertEqual(clean_number('75',True),Decimal('.75'))
         self.assertEqual(clean_number(' -10.25 '),Decimal('-10.25'))
+        self.assertEqual(clean_number('1234567890.123456789'),Decimal('1234567890.123456789'))
         for value in ['1,000','1e3','NaN','Infinity','.5','5.','',None]:
             self.assertIsNone(clean_number(value))
 
@@ -57,9 +70,12 @@ class DataGrainTests(unittest.TestCase):
         rows[1]['amount_converted']=None
         self.assertIsNone(build_canonical_views(rows).sku.iloc[0].sku_amount)
 
-    def test_dates_are_valid_calendar_dates(self):
+    def test_dates_are_valid_day_first_calendar_dates(self):
         self.assertEqual(clean_date('29/02/2024'),date(2024,2,29))
-        for value in ['29/02/2025','31/04/2026','01/13/2026','01/01/0000','2026-01-01','bad','1/1/2026']:
+        self.assertEqual(clean_date('1/1/2026'),date(2026,1,1))
+        self.assertEqual(clean_date(' 9/10/2026 '),date(2026,10,9))
+        self.assertEqual(clean_date('09/1/2026'),date(2026,1,9))
+        for value in ['29/02/2025','31/04/2026','01/13/2026','01/01/0000','2026-01-01','bad','1/1/26','0/1/2026','1/0/2026','', None]:
             self.assertIsNone(clean_date(value))
 
     def test_blank_business_keys_are_excluded(self):
@@ -78,3 +94,67 @@ class DataGrainTests(unittest.TestCase):
         views=build_canonical_views([])
         self.assertTrue(views.sku.empty)
         self.assertIn('opportunity_amount',views.opportunity.columns)
+        self.assertIn('deal_size_on_pricing_date_usd',views.opportunity.columns)
+
+    def test_all_thirty_columns_are_mapped_once(self):
+        self.assertEqual(len(SOURCE_FIELDS),30)
+        self.assertEqual(len(set(RAW_COLUMNS)),30)
+        self.assertEqual(len(set(SQL_COLUMNS.values())),30)
+        self.assertEqual(SQL_COLUMNS['first_channel'],'1st_channel')
+        for name in ('age','comment','deal_size_on_pricing_date_usd'):
+            self.assertEqual(SQL_COLUMNS[name],name)
+        for name in ('first_channel','age','comment','deal_size_on_pricing_date_usd'):
+            self.assertIn(name,SKU_COLUMNS);self.assertIn(name,OPPORTUNITY_COLUMNS)
+        # Every canonical name and every SQL column name resolves to itself.
+        self.assertEqual(resolve_columns(RAW_COLUMNS),{name:name for name in RAW_COLUMNS})
+        self.assertEqual(resolve_columns(SQL_COLUMNS.values()),SQL_COLUMNS)
+
+    def test_export_headers_resolve_including_quoted_first_channel(self):
+        headers=[EXPORT_HEADERS[name] for name in RAW_COLUMNS]+['Unused Extra Column']
+        self.assertEqual(resolve_columns(headers),EXPORT_HEADERS)
+        for header in ('"1st_channel"','1st channel','1ST_CHANNEL',' 1st Channel '):
+            names=[SQL_COLUMNS[name] for name in RAW_COLUMNS if name!='first_channel']+[header.strip('"')]
+            self.assertEqual(resolve_columns(names)['first_channel'],header.strip('"'))
+
+    def test_missing_and_ambiguous_columns_are_reported(self):
+        with self.assertRaises(AppError) as missing:
+            resolve_columns([name for name in RAW_COLUMNS if name not in ('first_channel','age')])
+        self.assertIn('first_channel (1st_channel)',str(missing.exception));self.assertIn('age',str(missing.exception))
+        with self.assertRaises(AppError) as ambiguous:
+            resolve_columns(RAW_COLUMNS+['1st Channel'])
+        self.assertIn('first_channel',str(ambiguous.exception));self.assertIn('1st Channel',str(ambiguous.exception))
+
+    def test_identifiers_are_preserved_as_text(self):
+        rows=demo_rows()[:1];rows[0].update(opportunity_no='000123',product_code='1E3',subsidiary_subsidiary_code='007',comment=' 12345 ')
+        sku=build_canonical_views(rows).sku.iloc[0]
+        self.assertEqual((sku.opportunity_no,sku.product_code,sku.subsidiary_subsidiary_code,sku.comment),('000123','1E3','007','12345'))
+
+    def test_added_attributes_are_selected_not_summed(self):
+        views=build_canonical_views(demo_rows())
+        first=views.opportunity.iloc[0]
+        self.assertEqual((first.first_channel,first.age,first.comment,first.deal_size_on_pricing_date_usd),('Partner',Decimal(30),'Fictional note',Decimal(750)))
+        self.assertEqual(views.sku.iloc[0].age,Decimal(30))
+        self.assertEqual(views.sku.iloc[0].deal_size_on_pricing_date_usd,Decimal(750))
+        self.assertFalse(views.opportunity.iloc[0].has_quality_warning)
+
+    def test_invalid_attribute_values_become_null(self):
+        rows=demo_rows()[:1];rows[0].update(age='30 days',deal_size_on_pricing_date_usd='$1,000',first_channel='',comment='   ')
+        row=build_canonical_views(rows).opportunity.iloc[0]
+        self.assertIsNone(row.age);self.assertIsNone(row.deal_size_on_pricing_date_usd);self.assertIsNone(row.first_channel);self.assertIsNone(row.comment)
+
+    def test_duplicate_sku_rows_keep_one_attribute_value(self):
+        views=build_canonical_views(demo_rows()[:2])
+        self.assertEqual(len(views.sku),1)
+        self.assertEqual(views.sku.iloc[0].deal_size_on_pricing_date_usd,Decimal(750))
+        self.assertEqual(views.opportunity.iloc[0].deal_size_on_pricing_date_usd,Decimal(750))
+
+    def test_conflicting_attributes_are_flagged_at_both_grains(self):
+        rows=demo_rows()[:3];rows[1]['age']='31'
+        views=build_canonical_views(rows)
+        self.assertTrue(views.sku.iloc[0].has_quality_warning);self.assertEqual(views.sku.iloc[0].age,Decimal(30))
+        self.assertTrue(views.opportunity.iloc[0].has_quality_warning)
+        rows=demo_rows()[:3];rows[2]['deal_size_on_pricing_date_usd']='800'
+        views=build_canonical_views(rows)
+        self.assertFalse(views.sku.has_quality_warning.any())
+        self.assertTrue(views.opportunity.iloc[0].has_quality_warning)
+        self.assertEqual(views.opportunity.iloc[0].deal_size_on_pricing_date_usd,Decimal(750))

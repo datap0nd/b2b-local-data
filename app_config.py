@@ -11,9 +11,10 @@ import sysconfig
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = '0.3.0'
+APP_VERSION = '0.4.0'
 PLAN_VERSION = 1
-SCHEMA_VERSION = 1
+# Version of the app's canonical data schema (the 30 raw Salesforce columns and their derived grains).
+DATA_SCHEMA_VERSION = 2
 
 
 class AppError(Exception):
@@ -92,6 +93,23 @@ class Settings:
         return self.home / 'data'
 
     @property
+    def csv_path(self):
+        configured = self.get('B2B_CSV_PATH')
+        if not configured:
+            raise AppError('DB_KIND=csv requires B2B_CSV_PATH, an absolute path or a path relative to the .env folder.')
+        path = Path(configured).expanduser()
+        return (path if path.is_absolute() else self.home / path).resolve()
+
+    @property
+    def source_label(self):
+        kind = self.get('DB_KIND', 'demo')
+        if kind == 'demo':
+            return 'Fictional sample data'
+        if kind == 'csv':
+            return 'CSV file ' + self.csv_path.name
+        return 'PostgreSQL ' + (self.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project')
+
+    @property
     def postgres(self):
         raw = self.get('PGURL')
         if not raw:
@@ -105,27 +123,28 @@ class Settings:
             raise AppError('PGURL must be host:port/database; use RO_SQL_USER and RO_SQL_PW separately.') from None
 
     def validate(self):
-        if self.get('DB_KIND','demo') not in ('demo','postgres'):
-            raise AppError('This Salesforce replica uses PostgreSQL. Set DB_KIND=postgres or demo.')
+        if self.get('DB_KIND','demo') not in ('demo','postgres','csv'):
+            raise AppError('Set DB_KIND=postgres for the Salesforce replica, csv for a local export, or demo for fictional data.')
         self.number('APP_PORT',8765,high=65535)
         for key in ('DB_SSL','B2B_ALLOW_LOCALHOST_IDENTITY'):
             self.flag(key,True)
         if self.get('DB_KIND') == 'postgres':
             self.postgres
-        for key in ('B2B_RAW_TABLE','B2B_SKU_VIEW','B2B_OPPORTUNITY_VIEW','B2B_SCHEMA_VERSION_TABLE'):
-            name = self.get(key)
-            if name and (len(name.split('.')) != 2 or not all(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', part) for part in name.split('.'))):
-                raise AppError(f'{key} must be a schema.table identifier.')
+        if self.get('DB_KIND') == 'csv':
+            self.csv_path
+        name = self.get('B2B_RAW_TABLE')
+        if name and (len(name.split('.')) != 2 or not all(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', part) for part in name.split('.'))):
+            raise AppError('B2B_RAW_TABLE must be a schema.table identifier.')
 
 
 def verify_release(root=ROOT, inspect_environment=True):
     """Refuse a mixed code/contract/runtime/dependency release before launching the UI."""
     try:
         manifest = json.loads((root / 'release_manifest.json').read_text(encoding='utf-8-sig'))
-        expected = {'app_version':APP_VERSION, 'query_plan_version':PLAN_VERSION, 'database_schema_version':SCHEMA_VERSION,
+        expected = {'app_version':APP_VERSION, 'query_plan_version':PLAN_VERSION, 'data_schema_version':DATA_SCHEMA_VERSION,
                     'python_tag':'cp313', 'platform':'win_amd64'}
         if any(manifest.get(k) != v for k,v in expected.items()):
-            raise AppError('Release policy mismatch: code, query contract, schema, or ABI version differs. Rerun setup.ps1.')
+            raise AppError('Release policy mismatch: code, query contract, data schema, or ABI version differs. Rerun setup.ps1.')
         digest = hashlib.sha256((root / 'dependencies.lock.json').read_bytes()).hexdigest()
         if manifest.get('dependency_lock_sha256') != digest:
             raise AppError('Release dependency lock differs from its manifest. Rerun setup.ps1.')

@@ -13,9 +13,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app_config import APP_VERSION, ROOT, AppError, verify_release
-from data_layer import DataRepository, OPPORTUNITY_COLUMNS, SKU_COLUMNS
+from data_layer import DataRepository
 from history_store import HistoryStore
-from query_engine import PlannerClient, QueryExecutor, merge_plan, parse_plan
+from query_engine import QUERY_FIELDS, PlannerClient, QueryExecutor, merge_plan, parse_plan
 from query_models import Intent
 
 
@@ -127,7 +127,8 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
 
     @app.get('/api/status')
     def status():
-        return {'version':APP_VERSION,'database':settings.get('DB_KIND','demo'),
+        kind=settings.get('DB_KIND','demo')
+        return {'version':APP_VERSION,'database':kind,'source':settings.source_label,'previews':kind in ('demo','csv'),
                 'model':settings.get('LLM_MODEL_NAME') or settings.get('AI_MODEL') or 'Not configured',
                 'cache_seconds':app.state.snapshots.seconds,'snapshot_at':app.state.snapshots.loaded_at}
 
@@ -160,7 +161,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
             session_id=payload.session_id or app.state.store.create(owner)
             history,previous=app.state.store.context(owner,session_id)
             incoming=app.state.planner.plan(payload.question.strip(),history,previous,payload.view)
-            if set(incoming.remove_filters)-set(OPPORTUNITY_COLUMNS+SKU_COLUMNS+['stage_group','amount']):
+            if set(incoming.remove_filters)-QUERY_FIELDS:
                 raise AppError('Unknown field in remove_filters.')
             plan=merge_plan(previous,incoming)
             if plan.intent==Intent.CLARIFY:
@@ -171,7 +172,8 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
 
     @app.post('/api/sample')
     def sample(request:Request,payload:SampleRequest):
-        if settings.get('DB_KIND','demo')!='demo': raise AppError('Sample questions are available only for fictional data.')
+        # Previews build a fixed plan locally; they never call the model. Demo and CSV sources support them.
+        if settings.get('DB_KIND','demo') not in ('demo','csv'): raise AppError('Previews without Qwen are available for fictional data and local CSV files.')
         if not lane.acquire(blocking=False): return JSONResponse({'error':'A question is already running.'},status_code=429)
         try:
             owner=request.state.owner
@@ -179,7 +181,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
             values={'grain':'opportunity' if payload.view=='summary' else 'opportunity_sku','intent':payload.intent}
             if payload.intent!='table': values.update(dimensions=['stage_group'],measures=['amount','opportunity_count'])
             if payload.intent=='chart': values['chart_type']='bar'
-            return complete(owner,session_id,f'Show fictional {payload.intent} ({payload.view}).',parse_plan(values))
+            return complete(owner,session_id,f'Preview {payload.intent} ({payload.view}) from {settings.source_label}.',parse_plan(values))
         finally: lane.release()
 
     @app.post('/api/rerun')
@@ -191,6 +193,6 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     @app.post('/api/refresh')
     def refresh():
         views,timestamp=app.state.snapshots.get(force=True)
-        return {'snapshot_at':timestamp,'source':views.source,'opportunities':len(views.opportunity),'skus':len(views.sku)}
+        return {'snapshot_at':timestamp,'source':views.source,'source_name':views.source_name,'opportunities':len(views.opportunity),'skus':len(views.sku)}
 
     return app

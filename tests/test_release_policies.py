@@ -20,7 +20,7 @@ class ReleaseTests(unittest.TestCase):
     def test_supplied_manifest_matches_contract_and_lock(self):verify_release(self.root,False)
     def test_changed_release_values_block_launch(self):
         original=json.loads((self.root/'release_manifest.json').read_text())
-        for key,value in [('app_version','other'),('database_schema_version',2),('query_plan_version',2),('python_tag','cp312'),('platform','win_arm64')]:
+        for key,value in [('app_version','other'),('data_schema_version',1),('query_plan_version',2),('python_tag','cp312'),('platform','win_arm64')]:
             with self.subTest(key=key):
                 (self.root/'release_manifest.json').write_text(json.dumps(original|{key:value}))
                 with self.assertRaises(AppError):verify_release(self.root,False)
@@ -52,6 +52,25 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict('os.environ',{'AI_MODEL':'environment-model'},clear=True):
             settings=Settings.load(self.root)
         self.assertEqual(settings.get('LLM_MODEL_NAME'),'environment-model')
+    def test_manifest_describes_canonical_data_schema(self):
+        manifest=json.loads((self.root/'release_manifest.json').read_text())
+        self.assertEqual(manifest['app_version'],'0.4.0');self.assertEqual(manifest['data_schema_version'],2)
+        self.assertNotIn('database_schema_version',manifest)
+        self.assertEqual((ROOT/'VERSION').read_text().strip(),'0.4.0')
+    def test_csv_source_configuration(self):
+        (self.root/'.env').write_text('DB_KIND=csv\nB2B_CSV_PATH=exports/salesforce.csv\n')
+        with patch.dict('os.environ',{},clear=True):settings=Settings.load(self.root)
+        self.assertEqual(settings.csv_path,(self.root/'exports/salesforce.csv').resolve())
+        self.assertEqual(settings.source_label,'CSV file salesforce.csv')
+        absolute=str((self.root/'elsewhere.csv').resolve())
+        with patch.dict('os.environ',{'B2B_CSV_PATH':absolute},clear=True):self.assertEqual(str(Settings.load(self.root).csv_path),absolute)
+        (self.root/'.env').write_text('DB_KIND=csv\n')
+        with patch.dict('os.environ',{},clear=True),self.assertRaises(AppError):Settings.load(self.root)
+        (self.root/'.env').write_text('DB_KIND=sqlite\n')
+        with patch.dict('os.environ',{},clear=True),self.assertRaises(AppError):Settings.load(self.root)
+        (self.root/'.env').write_text('PGURL=database.example:5432/postgres\nB2B_CSV_PATH=exports/salesforce.csv\n')
+        with patch.dict('os.environ',{},clear=True):settings=Settings.load(self.root)
+        self.assertEqual(settings.get('DB_KIND'),'postgres');self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project')
     def test_rollback_preserves_local_data_and_checks_containment(self):
         release=self.root/'releases/previous';release.mkdir(parents=True);(release/'run.py').write_text('')
         runtime=self.root/'runtime/python';runtime.mkdir(parents=True);(runtime/'python.exe').write_text('')

@@ -14,6 +14,13 @@ from app_config import AppError
 from data_layer import BOOL_FIELDS, DATE_FIELDS, NUMBER_FIELDS, OPPORTUNITY_COLUMNS, SKU_COLUMNS, STAGE_GROUPS, present, sql_sum, stage_group
 from query_models import ContextAction, FilterClause, Grain, Intent, Measure, QueryPlanV1
 
+DEAL_SIZE_FIELD='deal_size_on_pricing_date_usd'
+# Derived fields available to filters, sorting, and remove_filters in addition to the grain columns.
+DERIVED_FIELDS={'stage_group','amount','deal_size'}
+QUERY_FIELDS=set(OPPORTUNITY_COLUMNS+SKU_COLUMNS)|DERIVED_FIELDS
+# Product-level columns: a deal-size breakdown by these would repeat one opportunity's total per product.
+PRODUCT_FIELDS=set(SKU_COLUMNS)-set(OPPORTUNITY_COLUMNS)
+
 
 def parse_plan(payload):
     try:
@@ -73,7 +80,7 @@ def typed_value(field,value):
 
 def validate_execution(plan):
     active=set(OPPORTUNITY_COLUMNS if plan.grain==Grain.OPPORTUNITY else SKU_COLUMNS) | {'stage_group'}
-    all_fields=set(OPPORTUNITY_COLUMNS+SKU_COLUMNS) | {'stage_group','amount'}
+    all_fields=QUERY_FIELDS
     for clause in plan.filters:
         if clause.field not in all_fields:
             raise AppError(f"Unknown filter field '{clause.field}'.")
@@ -90,6 +97,11 @@ def validate_execution(plan):
             raise AppError('The lower between boundary must come first.')
     if set(plan.remove_filters)-all_fields:
         raise AppError('Unknown field in remove_filters.')
+    if Measure.DEAL_SIZE in plan.measures:
+        if plan.intent==Intent.TABLE and plan.grain==Grain.OPPORTUNITY_SKU:
+            raise AppError('Deal size is counted once per opportunity. List it in the summary layout, or ask for a grouped metric by opportunity-level fields.')
+        if PRODUCT_FIELDS & set(plan.dimensions):
+            raise AppError('Deal size is an opportunity total and cannot be broken down by product fields. Use the amount measure for product breakdowns.')
     if set(plan.dimensions)-active:
         raise AppError('A selected dimension is unavailable at this grain. Change the grain or selected columns.')
     if plan.intent in (Intent.METRIC,Intent.CHART) and not plan.measures:
@@ -147,6 +159,9 @@ class QueryExecutor:
         active,other=(opportunity,sku) if plan.grain==Grain.OPPORTUNITY else (sku,opportunity)
         amount_field='opportunity_amount' if plan.grain==Grain.OPPORTUNITY else 'sku_amount'
         active['amount']=active[amount_field]
+        # Deal size is the opportunity-level value at both grains, so per-product rows never sum it twice.
+        deal_sizes=opportunity.set_index('opportunity_no')[DEAL_SIZE_FIELD]
+        active['deal_size']=active[DEAL_SIZE_FIELD] if plan.grain==Grain.OPPORTUNITY else active.opportunity_no.map(deal_sizes)
         own_filters=[f for f in plan.filters if f.field in active.columns]
         cross_filters=[f for f in plan.filters if f.field not in active.columns]
         for clause in own_filters:
@@ -182,6 +197,7 @@ class QueryExecutor:
                     raise AppError('This amount combines multiple currencies. Include the currency column as a dimension or filter to one currency.')
                 for measure in plan.measures:
                     if measure==Measure.AMOUNT: value=sql_sum(group[amount_field])
+                    elif measure==Measure.DEAL_SIZE: value=sql_sum(group.drop_duplicates('opportunity_no').deal_size)
                     elif measure==Measure.QUANTITY: value=sql_sum(group.quantity)
                     elif measure==Measure.OPPORTUNITY_COUNT: value=len(set(present(group.opportunity_no)))
                     elif plan.grain==Grain.OPPORTUNITY: value=int(sum(present(group.sku_count)))
@@ -202,11 +218,9 @@ class QueryExecutor:
         warnings=[]
         if quality_count: warnings.append(f'{quality_count:,} matching business rows carry a data-quality warning.')
         if views.excluded_rows: warnings.append(f'{views.excluded_rows:,} raw rows had no opportunity number or product code and were excluded.')
-        if views.fallback_reason: warnings.append(views.fallback_reason+' The identical grains were reconstructed locally.')
-        if views.source=='database_views': warnings.append('Rows with missing business keys are excluded by the database views; their count is not available here.')
         return {'columns':columns,'column_types':{column:type_of(column) for column in columns},'rows':rows,'total_rows':total,'source_rows':source_rows,'truncated':total>limit,
             'grain':plan.grain.value,'intent':plan.intent.value,'view':'summary' if plan.grain==Grain.OPPORTUNITY else 'detail',
-            'filters':[f.model_dump(mode='json') for f in plan.filters], 'source':views.source,'warnings':warnings,
+            'filters':[f.model_dump(mode='json') for f in plan.filters], 'source':views.source,'source_name':views.source_name,'warnings':warnings,
             'scope':'Filters apply to canonical business rows. Cross-grain product/opportunity filters select whole matching opportunities.',
             'chart':{'type':plan.chart_type,'dimensions':plan.dimensions,'measures':[m.value for m in plan.measures]} if plan.intent==Intent.CHART else None}
 
@@ -244,6 +258,9 @@ class PlannerClient:
 Contract: {json.dumps(QueryPlanV1.model_json_schema())}
 Opportunity fields: {OPPORTUNITY_COLUMNS}. SKU fields: {SKU_COLUMNS}. Both also support stage_group.
 Measure amount uses opportunity_amount at opportunity grain and sku_amount at SKU grain.
+first_channel (the 1st channel), age (supplied days, never recalculated or summed), comment, and deal_size_on_pricing_date_usd are opportunity attributes available at both grains.
+Measure deal_size sums deal_size_on_pricing_date_usd once per opportunity (USD). It supports totals and opportunity-level groupings such as stage_group, opportunity_owner, or first_channel; product filters select the matching opportunities.
+Deal size cannot be broken down by product fields (product_code, pet_name, gscm_product_group_new) or listed per SKU row; product breakdowns use amount. Ask a clarification when a question needs a deal-size product breakdown.
 Table dimensions select columns, and business keys are retained. Metric/chart dimensions GROUP BY.
 Filters apply AFTER canonical aggregation. Product-only fields used on opportunity grain select entire matching opportunities, retaining all their SKU amounts.
 To sum only matching products, use opportunity_sku grain. Ask clarification if that scope is ambiguous.
