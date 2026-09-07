@@ -67,7 +67,7 @@ B2B_DATA_DIR=C:\YourInstallFolder\data
 APP_PORT=8765
 ```
 
-On a work PC that already runs the data-governance app, no database or model settings are needed: the app reads `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` for PostgreSQL and `DG_AI_API_URL`, `DG_AI_API_KEY`, and `DG_AI_MODEL` for the model from the environment, and trusts the data-governance endpoint host automatically. Values in `.env` take precedence when set.
+On a work PC the model is configured by the environment variables `LOCAL_AI_ENDPOINT`, `LOCAL_AI_API_KEY`, and `LOCAL_AI_MODEL` (case-insensitive), which fill `LLM_API_URL`, `LLM_API_KEY`, and `LLM_MODEL_NAME` when those are blank; the endpoint host is trusted automatically. The data-governance names `DG_AI_API_URL`, `DG_AI_API_KEY`, and `DG_AI_MODEL` are used after them, and `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` supply the PostgreSQL connection. Values in `.env` take precedence when set.
 
 A blank `DB_KIND` selects PostgreSQL when `PGURL` (or `PGHOST`) is present, otherwise fictional demo data. `DB_KIND=demo` explicitly stays in demo mode. The old `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` and `AI_*` settings are accepted for existing installations; set `DB_KIND=postgres` with old database variables.
 

@@ -65,6 +65,14 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)
         self.assertEqual(settings.get('LLM_MODEL_NAME'),'my-qwen');self.assertEqual(settings.postgres['host'],'other.example')
         with patch.dict('os.environ',environment|{'LLM_MODEL_NAME':'env-qwen'},clear=True):self.assertEqual(Settings.load(self.root).get('LLM_MODEL_NAME'),'env-qwen')
+    def test_local_ai_variables_configure_the_model(self):
+        environment={'local_ai_endpoint':'http://10.1.2.3:8001/v1','LOCAL_AI_API_KEY':'k2','Local_AI_Model':'my-model','DG_AI_API_URL':'http://ignored:1/v1','DG_AI_MODEL':'gemma'}
+        with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)
+        self.assertEqual((settings.get('LLM_API_URL'),settings.get('LLM_API_KEY'),settings.get('LLM_MODEL_NAME')),('http://10.1.2.3:8001/v1','k2','my-model'))
+        self.assertIn('10.1.2.3',settings.get('B2B_LLM_ALLOWED_HOSTS'))
+        (self.root/'.env').write_text('local_ai_endpoint=http://192.168.5.5:9000/v1\nLLM_MODEL_NAME=chosen\n')
+        with patch.dict('os.environ',{'LOCAL_AI_MODEL':'env-model'},clear=True):settings=Settings.load(self.root)
+        self.assertEqual((settings.get('LLM_API_URL'),settings.get('LLM_MODEL_NAME')),('http://192.168.5.5:9000/v1','chosen'))
     def test_legacy_variables_remain_accepted(self):
         with patch.dict('os.environ',{'DB_KIND':'demo','AI_MODEL':'old-model','AI_BASE_URL':'http://localhost:9000/v1','AI_API_KEY':'local-key'},clear=True):
             settings=Settings.load(self.root)

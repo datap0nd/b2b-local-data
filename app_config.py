@@ -52,8 +52,12 @@ class Settings:
         # nowhere are the data-governance variables already present on work PCs (DG_AI_API_URL, DG_AI_API_KEY,
         # DG_AI_MODEL, PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD) and the pre-0.3 names used, environment first.
         aliases = {'RO_SQL_USER':('PGUSER','DB_USER'), 'RO_SQL_PW':('PGPASSWORD','DB_PASSWORD'),
-                   'LLM_API_URL':('DG_AI_API_URL','AI_BASE_URL'), 'LLM_API_KEY':('DG_AI_API_KEY','AI_API_KEY'), 'LLM_MODEL_NAME':('DG_AI_MODEL','AI_MODEL')}
+                   'LLM_API_URL':('LOCAL_AI_ENDPOINT','DG_AI_API_URL','AI_BASE_URL'), 'LLM_API_KEY':('LOCAL_AI_API_KEY','DG_AI_API_KEY','AI_API_KEY'),
+                   'LLM_MODEL_NAME':('LOCAL_AI_MODEL','DG_AI_MODEL','AI_MODEL')}
+        # Alias names are matched case-insensitively (local_ai_endpoint and LOCAL_AI_ENDPOINT are the same setting).
         file_layer, env_layer = read_env(home / '.env'), dict(os.environ)
+        file_layer.update({k.upper(): v for k, v in list(file_layer.items()) if k.upper() != k and k.upper() not in file_layer})
+        env_layer.update({k.upper(): v for k, v in list(env_layer.items()) if k.upper() != k and k.upper() not in env_layer})
         overrides = {}
         for layer in (file_layer, env_layer):
             overrides.update({k: v for k, v in layer.items() if v != '' or k not in overrides})
@@ -65,7 +69,7 @@ class Settings:
                 value = env_layer.get(old) or file_layer.get(old)
                 if value:
                     overrides[canonical] = value
-                    derived_endpoint = derived_endpoint or (canonical == 'LLM_API_URL' and old == 'DG_AI_API_URL')
+                    derived_endpoint = derived_endpoint or (canonical == 'LLM_API_URL' and old in ('LOCAL_AI_ENDPOINT', 'DG_AI_API_URL'))
                     break
         if not overrides.get('PGURL') and overrides.get('PGHOST'):
             overrides['PGURL'] = f"{overrides['PGHOST']}:{overrides.get('PGPORT') or 5432}/{overrides.get('PGDATABASE') or 'postgres'}"
@@ -76,7 +80,7 @@ class Settings:
         if 'LLM_API_URL' in overrides and 'AI_PROVIDER' not in overrides:
             values['AI_PROVIDER'] = 'openai_compatible'
         if derived_endpoint and values.get('LLM_API_URL'):
-            # The data-governance endpoint is already trusted on this PC; allow its host without extra configuration.
+            # The endpoint named by LOCAL_AI_ENDPOINT or data governance is already trusted on this PC; allow its host.
             host = urlsplit(values['LLM_API_URL'] if '://' in values['LLM_API_URL'] else 'http://' + values['LLM_API_URL']).hostname or ''
             allowed = {h.strip() for h in values.get('B2B_LLM_ALLOWED_HOSTS', '').split(',') if h.strip()}
             if host:
