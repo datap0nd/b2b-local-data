@@ -63,7 +63,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(rerun['table']['rows'],result['table']['rows'])
     def test_status_labels_source_and_previews(self):
         status=self.request('/api/status')
-        self.assertEqual((status['database'],status['source'],status['previews'],status['version']),('demo','Fictional sample data',True,'0.5.1'))
+        self.assertEqual((status['database'],status['source'],status['previews'],status['version']),('demo','Fictional sample data',True,'0.6.0'))
     def test_clarification_never_loads_sql_or_erases_plan(self):
         first=self.request('/api/sample',{'view':'detail'})
         before=self.repository.load.call_count
