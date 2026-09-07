@@ -42,10 +42,10 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(settings.get('RO_SQL_PW'),'override')
         self.assertEqual(settings.postgres['database'],'postgres')
         self.assertEqual(read_env(self.root/'.env')['RO_SQL_PW'],'abc#def=$HOME')
-    def test_mixed_case_env_keys_such_as_PAT_CODE_are_accepted(self):
-        (self.root/'.env').write_text('PAT_CODE=abc\nDB_KIND=demo\n')
-        self.assertEqual(read_env(self.root/'.env')['PAT_CODE'],'abc')
-        with patch.dict('os.environ',{},clear=True):self.assertEqual(Settings.load(self.root).get('PAT_CODE'),'abc')
+    def test_mixed_case_env_keys_such_as_DG_GITHUB_TOKEN_are_accepted(self):
+        (self.root/'.env').write_text('DG_GITHUB_TOKEN=abc\nDB_KIND=demo\n')
+        self.assertEqual(read_env(self.root/'.env')['DG_GITHUB_TOKEN'],'abc')
+        with patch.dict('os.environ',{},clear=True):self.assertEqual(Settings.load(self.root).get('DG_GITHUB_TOKEN'),'abc')
         (self.root/'.env').write_text('1BAD=x\n')
         with self.assertRaises(AppError):read_env(self.root/'.env')
     def test_legacy_variables_remain_accepted(self):

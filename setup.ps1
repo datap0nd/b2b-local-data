@@ -43,9 +43,9 @@ if (-not (Test-Path -LiteralPath $envPath) -and (Test-Path -LiteralPath (Join-Pa
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.env.example') -Destination $envPath
 }
 $localValues = Read-EnvFile $envPath
-# PAT_CODE is the data-governance GitHub token: a process/user environment variable, or a .env line.
-$githubToken = Setting 'PAT_CODE' $localValues
-if (-not $githubToken) { $githubToken = Setting 'B2B_GITHUB_TOKEN' $localValues }   # legacy name from earlier installs
+# DG_GITHUB_TOKEN is the same GitHub token the data-governance installer uses: an environment variable, or a .env line.
+$githubToken = Setting 'DG_GITHUB_TOKEN' $localValues
+foreach ($alias in @('PAT_CODE','B2B_GITHUB_TOKEN')) { if (-not $githubToken) { $githubToken = Setting $alias $localValues } }
 $githubHeaders = @{ 'User-Agent'='B2B-Local-Data-Setup'; 'Accept'='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
 if ($githubToken) { $githubHeaders['Authorization'] = "Bearer $githubToken" }
 if (-not $DownloadCache) { $DownloadCache = Join-Path $InstallDir '.downloads' }
@@ -63,7 +63,7 @@ function Download-File([string]$Url, [string]$Path, [hashtable]$Headers) {
             Invoke-WebRequest -Uri $Url -OutFile $Path -Headers $Headers -UseBasicParsing -TimeoutSec 120
             return
         } catch {
-            if ($attempt -eq 3) { throw 'GitHub download failed. Check access and the PAT_CODE token.' }
+            if ($attempt -eq 3) { throw 'GitHub download failed. Check access and the DG_GITHUB_TOKEN token.' }
             Start-Sleep -Seconds 2
         }
     }
@@ -90,7 +90,7 @@ function Get-LockedArchive($Item, [string]$Tag) {
     if ($Offline) { throw "Offline mode: missing or invalid cached archive $($Item.filename)" }
     if (-not $script:releaseAssets) {
         try { $script:releaseAssets = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/tags/$Tag" -Headers $githubHeaders -TimeoutSec 30).assets }
-        catch { throw 'Portable GitHub release is unavailable. Check the PAT_CODE token and that this release has been published.' }
+        catch { throw 'Portable GitHub release is unavailable. Check the DG_GITHUB_TOKEN token and that this release has been published.' }
     }
     $asset = @($script:releaseAssets | Where-Object { $_.name -ceq $Item.filename -and $_.state -eq 'uploaded' })
     if ($asset.Count -ne 1 -or "$($asset[0].id)" -notmatch '^[0-9]+$') { throw "Portable release is missing $($Item.filename)." }
@@ -119,7 +119,7 @@ try {
             $status = ''; $detail = $_.Exception.Message
             try { $status = [int]$_.Exception.Response.StatusCode } catch { }
             try { $body = (New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd(); if ($body) { $detail = ($body | ConvertFrom-Json).message } } catch { }
-            $tokenState = if (-not $githubToken) { 'no PAT_CODE token was found (environment or .env)' } elseif ($githubToken -match '^(github_pat_|ghp_|gho_|ghs_)') { "PAT_CODE token found ($($githubToken.Length) characters, GitHub format)" } else { "PAT_CODE token found ($($githubToken.Length) characters, not a recognised GitHub token format)" }
+            $tokenState = if (-not $githubToken) { 'no DG_GITHUB_TOKEN token was found (environment or .env)' } elseif ($githubToken -match '^(github_pat_|ghp_|gho_|ghs_)') { "DG_GITHUB_TOKEN token found ($($githubToken.Length) characters, GitHub format)" } else { "DG_GITHUB_TOKEN token found ($($githubToken.Length) characters, not a recognised GitHub token format)" }
             $hint = switch ($status) { 401 { 'The token is invalid or expired.' } 403 { 'The token is rejected: check SSO authorization and API rate limits.' } 404 { 'The token cannot see this private repository: grant it Contents: read on datap0nd/b2b-local-data (fine-grained) or the repo scope (classic).' } default { 'GitHub API is unreachable: check proxy, TLS inspection, and firewall rules for api.github.com.' } }
             throw "Cannot read GitHub $Ref for $Repository (HTTP $status $detail). $tokenState. $hint"
         }
