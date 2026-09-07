@@ -34,8 +34,9 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(self.store.context('alice',self.store.create('alice')),([],None))
     def test_version_one_database_gains_model_replies_and_logs(self):
         import sqlite3
+        from contextlib import closing
         path=Path(self.temp.name)/'old.db'
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection,connection:
             connection.executescript('''CREATE TABLE sessions (id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL DEFAULT 'New conversation', active_plan TEXT, created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '');
                 CREATE TABLE turns (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), question TEXT NOT NULL, response TEXT NOT NULL, plan TEXT, created_at TEXT NOT NULL DEFAULT '');
                 INSERT INTO sessions(id,owner) VALUES ('s1','alice'); INSERT INTO turns(session_id,question,response) VALUES ('s1','old question','old answer'); PRAGMA user_version=1;''')
