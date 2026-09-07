@@ -248,6 +248,26 @@ def demo_rows():
             row('OPP-003', 'SKU-C', 2400, 2, 2400, stage='Qualified', end_customer='Example East', age='45')]
 
 
+def ssl_related(error):
+    text = repr(error).lower()
+    return isinstance(error, ssl.SSLError) or 'ssl' in text or 'tls' in text or 'certificate' in text or 'handshake' in text or 'eof occurred' in text
+
+
+def describe_database_error(error, settings=None):
+    """The driver's own diagnosis, with any password redacted and the length bounded."""
+    original = getattr(error, 'orig', None) or error
+    detail = ''
+    if original.args and isinstance(original.args[0], dict):
+        detail = ' '.join(str(original.args[0].get(key, '')) for key in ('S', 'C', 'M') if original.args[0].get(key))
+    detail = detail or str(original) or type(original).__name__
+    detail = f'{type(original).__name__}: {detail}'
+    for key in ('RO_SQL_PW', 'DB_PASSWORD', 'PGPASSWORD'):
+        secret = settings.get(key) if settings else ''
+        if secret:
+            detail = detail.replace(secret, '***')
+    return re.sub(r'\s+', ' ', detail)[:300]
+
+
 def quoted_relation(name):
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*', name):
         raise AppError('Invalid database relation configuration.')
@@ -295,14 +315,35 @@ class DataRepository:
     def __init__(self, settings, engine=None):
         self.settings, self.engine = settings, engine
 
+    def _build_engine(self, context):
+        options = self.settings.postgres
+        url = URL.create('postgresql+pg8000', username=self.settings.get('RO_SQL_USER') or self.settings.get('DB_USER'),
+            password=self.settings.get('RO_SQL_PW') or self.settings.get('DB_PASSWORD'), **options)
+        return create_engine(url, connect_args={'ssl_context': context, 'timeout': self.settings.number('DB_TIMEOUT_SECONDS', 30, high=300)},
+            isolation_level='REPEATABLE READ', pool_pre_ping=True, hide_parameters=True, pool_size=2, max_overflow=0)
+
     def _engine(self):
         if self.engine is None:
-            options = self.settings.postgres
-            context = ssl.create_default_context(cafile=self.settings.get('DB_CA_FILE') or None) if self.settings.flag('DB_SSL', True) else False
-            url = URL.create('postgresql+pg8000', username=self.settings.get('RO_SQL_USER') or self.settings.get('DB_USER'),
-                password=self.settings.get('RO_SQL_PW') or self.settings.get('DB_PASSWORD'), **options)
-            self.engine = create_engine(url, connect_args={'ssl_context': context, 'timeout': self.settings.number('DB_TIMEOUT_SECONDS', 30, high=300)},
-                isolation_level='REPEATABLE READ', pool_pre_ping=True, hide_parameters=True, pool_size=2, max_overflow=0)
+            mode = (self.settings.get('DB_SSL') or 'true').lower()
+            if mode == 'prefer':
+                # Like psycopg2's default sslmode=prefer (the data-governance behaviour): encrypt without certificate
+                # checks when the server offers TLS, otherwise connect in plain text.
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                candidate = self._build_engine(context)
+                try:
+                    with candidate.connect():
+                        pass
+                except Exception as error:
+                    candidate.dispose()
+                    if not ssl_related(error):
+                        raise
+                    candidate = self._build_engine(False)
+                self.engine = candidate
+            else:
+                context = ssl.create_default_context(cafile=self.settings.get('DB_CA_FILE') or None) if mode == 'true' else False
+                self.engine = self._build_engine(context)
         return self.engine
 
     def _cap(self):
@@ -342,8 +383,8 @@ class DataRepository:
                     raw = self._read(connection, relation, self._columns(connection, relation))
         except AppError:
             raise
-        except Exception:
-            raise AppError('PostgreSQL read failed. Check the read-only credentials, source schema, TLS, and connection timeout.') from None
+        except Exception as error:
+            raise AppError(f'PostgreSQL read failed ({describe_database_error(error, self.settings)}). Check the read-only credentials, source schema, TLS (DB_SSL=true, prefer, or false), and connection timeout.') from None
         return raw, 'postgres', relation
 
     def load(self):

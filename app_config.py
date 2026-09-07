@@ -69,6 +69,9 @@ class Settings:
                     break
         if not overrides.get('PGURL') and overrides.get('PGHOST'):
             overrides['PGURL'] = f"{overrides['PGHOST']}:{overrides.get('PGPORT') or 5432}/{overrides.get('PGDATABASE') or 'postgres'}"
+            # The data-governance connection does not verify server certificates; match it unless DB_SSL is set.
+            if not overrides.get('DB_SSL'):
+                overrides['DB_SSL'] = 'prefer'
         values = read_env(ROOT / '.env.example') | overrides
         if 'LLM_API_URL' in overrides and 'AI_PROVIDER' not in overrides:
             values['AI_PROVIDER'] = 'openai_compatible'
@@ -146,8 +149,9 @@ class Settings:
         if self.get('DB_KIND','demo') not in ('demo','postgres','csv'):
             raise AppError('Set DB_KIND=postgres for the Salesforce replica, csv for a local export, or demo for fictional data.')
         self.number('APP_PORT',8765,high=65535)
-        for key in ('DB_SSL','B2B_ALLOW_LOCALHOST_IDENTITY'):
-            self.flag(key,True)
+        self.flag('B2B_ALLOW_LOCALHOST_IDENTITY',True)
+        if (self.get('DB_SSL') or 'true').lower() not in ('true','false','prefer'):
+            raise AppError('DB_SSL must be true (verified TLS), prefer (TLS without certificate checks, plain fallback), or false.')
         if self.get('DB_KIND') == 'postgres':
             self.postgres
         if self.get('DB_KIND') == 'csv':

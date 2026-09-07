@@ -55,7 +55,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual((settings.get('RO_SQL_USER'),settings.get('RO_SQL_PW')),('reader','pw'))
         self.assertEqual((settings.get('LLM_API_URL'),settings.get('LLM_API_KEY'),settings.get('LLM_MODEL_NAME'),settings.get('AI_PROVIDER')),('http://10.20.30.40:8000/v1','k','Qwen/Qwen3.8-27B','openai_compatible'))
         self.assertIn('10.20.30.40',settings.get('B2B_LLM_ALLOWED_HOSTS'))
-        self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project')
+        self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project');self.assertEqual(settings.get('DB_SSL'),'prefer')
+        with patch.dict('os.environ',environment|{'DB_SSL':'true'},clear=True):self.assertEqual(Settings.load(self.root).get('DB_SSL'),'true')
+        with patch.dict('os.environ',{'DB_KIND':'demo','DB_SSL':'maybe'},clear=True),self.assertRaises(AppError):Settings.load(self.root)
         with patch.dict('os.environ',environment|{'PGPORT':'6543','PGDATABASE':'bi'},clear=True):self.assertEqual(Settings.load(self.root).postgres,{'host':'db.internal','port':6543,'database':'bi'})
         # A model or database chosen in .env beats the data-governance values from the environment.
         (self.root/'.env').write_text('LLM_MODEL_NAME=my-qwen\nPGURL=other.example:5432/app\n')

@@ -64,6 +64,22 @@ class GatewayTests(unittest.TestCase):
                 repo,connection=self.repository(B2B_CSV_PATH=str(csv))
                 with patch.object(repo,'_read',side_effect=database_error(code)),patch('data_layer.read_csv_source') as read_csv,self.assertRaises(AppError) as error:repo.load()
                 read_csv.assert_not_called();self.assertIn('PostgreSQL read failed',str(error.exception))
+    def test_failure_message_carries_the_driver_diagnosis_without_the_password(self):
+        repo,connection=self.repository(RO_SQL_PW='s3cret')
+        with patch.object(repo,'_read',side_effect=DBAPIError('hidden',None,Exception({'S':'FATAL','C':'28P01','M':'password authentication failed for user "reader" s3cret'}),False)),self.assertRaises(AppError) as error:repo.load()
+        self.assertIn('28P01',str(error.exception));self.assertIn('password authentication failed',str(error.exception));self.assertNotIn('s3cret',str(error.exception))
+        self.assertIn('DB_SSL=true, prefer, or false',str(error.exception))
+    def test_prefer_mode_falls_back_to_plain_after_a_tls_failure(self):
+        import ssl as ssl_module
+        settings=Settings(Path('.'),{'DB_KIND':'postgres','PGURL':'db.example:5432/postgres','DB_SSL':'prefer'})
+        repo=DataRepository(settings);contexts=[]
+        tls_engine=MagicMock();tls_engine.connect.side_effect=ssl_module.SSLError('handshake failure');plain_engine=MagicMock()
+        def build(context):contexts.append(context);return tls_engine if context else plain_engine
+        with patch.object(repo,'_build_engine',side_effect=build):self.assertIs(repo._engine(),plain_engine)
+        self.assertEqual(len(contexts),2);self.assertEqual(contexts[0].verify_mode,ssl_module.CERT_NONE);self.assertFalse(contexts[0].check_hostname);self.assertIs(contexts[1],False)
+        tls_engine.dispose.assert_called_once()
+        other=DataRepository(settings);failing=MagicMock();failing.connect.side_effect=RuntimeError('password authentication failed')
+        with patch.object(other,'_build_engine',return_value=failing),self.assertRaises(RuntimeError):other._engine()
     def test_snapshot_reuse_refresh_and_failure(self):
         repository=MagicMock();repository.load.side_effect=['first','second',AppError('offline'),'fourth']
         cache=Snapshots(repository,60)
