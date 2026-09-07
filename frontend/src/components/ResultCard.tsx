@@ -8,6 +8,7 @@ import {PREVIEW_ROWS, ResultTable} from './ResultTable';
 import {DetailsPanel} from './DetailsPanel';
 import {QualityPanel} from './QualityPanel';
 import {OpenDefinition} from './OpenDefinition';
+import {SupportingRecords} from './SupportingRecords';
 import {csvText, filterText, formatUpdated, MEASURE_LABELS} from '@/format';
 import {cn, download} from '@/lib/utils';
 import type {AnswerPayload, PresentationName, Row, TablePayload, ViewName} from '@/types';
@@ -24,6 +25,7 @@ export interface ResultCardProps {
   onExplore: () => void;
   onSuggestion: (text: string) => void;
   expanded?: boolean;
+  onRerun?: () => void;
 }
 
 export function scopeText(table: TablePayload, expanded = false): string {
@@ -35,7 +37,7 @@ export function scopeText(table: TablePayload, expanded = false): string {
 }
 
 /** Title, context, metrics and optional insight have separate owners in the answer contract. */
-export function ResultCard({answer, shown: table, view, presentation, loading, notice, onView, onPresentation, onExplore, onSuggestion, expanded}: ResultCardProps) {
+export function ResultCard({answer, shown: table, view, presentation, loading, notice, onView, onPresentation, onExplore, onSuggestion, expanded, onRerun}: ResultCardProps) {
   const [measure, setMeasure] = useState(table.chart?.measures[0] ?? '');
   const [details, setDetails] = useState<Row | null>(null);
   const [warningsOpen, setWarningsOpen] = useState(false);
@@ -84,16 +86,17 @@ export function ResultCard({answer, shown: table, view, presentation, loading, n
         </div>}
         {notice && <span className="text-xs text-ink-3">{notice}</span>}
         <span className="ml-auto flex items-center gap-1">
-          <Hint text={table.truncated ? 'Exports the returned rows and all columns in the displayed table order, with exact values.' : 'Exports every returned row and column in the displayed table order, with exact values.'}><Button variant="ghost" size="xs" onClick={() => download(`b2b-${table.grain}.csv`, csvText(table, exportRows), 'text/csv;charset=utf-8')} data-testid="export"><Download />CSV</Button></Hint>
+          <Hint text={table.truncated ? 'Exports the returned rows and all columns in the displayed table order, with exact values.' : 'Exports every returned row and column in the displayed table order, with exact values.'}><Button variant="ghost" size="xs" onClick={() => download(`b2b-${table.grain}.csv`, csvText(table, exportRows), 'text/csv;charset=utf-8')} data-testid="export"><Download />{rows ? 'CSV' : 'Result CSV'}</Button></Hint>
           {!expanded && table.total_rows > 0 && !scalar && <Button variant="outline" size="sm" onClick={onExplore} data-testid="explore"><Maximize2 />Explore results</Button>}
         </span>
       </div>
-      {!scalar && <div className="px-5 pb-5 sm:px-7">
+      {!scalar && <div className="px-5 pb-5 sm:px-7" data-testid="primary-result">
         {showChart ? <ResultChart table={table} measure={measureKey} onMeasure={setMeasure} /> : <>
           <p className="mb-3 text-xs text-ink-3" data-testid="scope">{scopeText(table, expanded)}</p>
           {table.total_rows === 0 ? <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-ink-3" data-testid="empty">No rows match this question.</p> : <ResultTable table={table} mode={expanded ? 'full' : 'preview'} pageSize={pageSize} onPageSize={setPageSize} onDetails={setDetails} onSortedRows={setExportRows} sorting={sorting} onSorting={setSorting} key={table.view + table.result_digest} />}
         </>}
       </div>}
+      {!rows && <SupportingRecords answer={answer} onRerun={onRerun} />}
       <details className="border-t border-line px-5 py-3 text-xs text-ink-3 sm:px-7" data-testid="query-details">
         <summary className="w-fit cursor-pointer rounded font-medium hover:text-ink">Query details</summary>
         <div className="mt-3 space-y-3">

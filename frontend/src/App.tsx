@@ -58,7 +58,7 @@ export function App() {
       try {
         const result = await api.result(id, turn.id);
         if (result.available) {
-          const payload: AnswerPayload = {kind: 'table', turn_id: turn.id, session_id: id, table: result.table, variants: result.variants, answer: result.answer, suggestions: result.suggestions ?? []};
+          const payload: AnswerPayload = {kind: 'table', turn_id: turn.id, session_id: id, table: result.table, variants: result.variants, answer: result.answer, suggestions: result.suggestions ?? [], supporting: result.supporting};
           setTurns(prev => prev.map(t => (t.id === turn.id ? answerTurn(turn.id, turn.question, payload, turn.created_at) : t)));
         } else setTurns(prev => prev.map(t => (t.id === turn.id ? {...t, assistant: {status: 'missing', message: result.message, canRerun: result.can_rerun}} : t)));
       } catch (error) {
@@ -188,7 +188,7 @@ export function App() {
         )}
         {expanded && expanded.assistant.status === 'answer' ? (
           <ExpandedAnalysis answer={expanded.assistant.answer} shown={expanded.assistant.shown} view={expanded.assistant.view} presentation={expanded.assistant.presentation} loading={expanded.assistant.loading} notice={expanded.assistant.notice}
-            onView={v => onView(expanded, v)} onPresentation={p => onPresentation(expanded, p)} onExplore={() => {}} onSuggestion={onSuggestion} onClose={closeExpanded}>
+            onView={v => onView(expanded, v)} onPresentation={p => onPresentation(expanded, p)} onExplore={() => {}} onSuggestion={onSuggestion} onClose={closeExpanded} onRerun={() => { closeExpanded(); void onRunWithCurrent(expanded); }}>
             <Composer compact busy={busy} draft={draft} onDraftChange={setDraft} onSubmit={async text => { await ask(text); closeExpanded(); }} placeholder="Ask a follow-up" />
           </ExpandedAnalysis>
         ) : (

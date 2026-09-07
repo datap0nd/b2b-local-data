@@ -68,8 +68,8 @@ export function expectedRowText(t: TablePayload, visible: string[], row: Record<
 export function measureText(t: TablePayload, m: string, v: Cell): string { if (v == null) return '—'; const s = fmtNumber(v, MONEY.has(m) ? 2 : null); const cur = m === 'deal_size' ? 'USD' : MONEY.has(m) ? currency(t) : null; return cur && cur !== 'mixed' ? `${s} ${cur}` : s; }
 export function axisLabel(t: TablePayload, dimension: string, v: Cell): string { if (v == null) return 'Unknown'; return t.column_types[dimension] === 'date' ? fmtDate(v, dimension === 'close_month') : String(v); }
 export function csvExpected(t: TablePayload, rows: Record<string, Cell>[]): string {
-  const quote = (v: Cell) => { let s = v == null ? '' : String(v); if (/^[\s]*[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replaceAll('"', '""') + '"'; };
-  return '﻿' + [t.columns.map(quote).join(','), ...rows.map(r => t.columns.map(c => quote(r[c])).join(','))].join('\r\n');
+  const quote = (v: Cell, type = 'text') => { let s = v == null ? '' : String(v); const numeric = type === 'number' && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(s); if (!numeric && /^[\s]*[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replaceAll('"', '""') + '"'; };
+  return '﻿' + [t.columns.map(column => quote(column)).join(','), ...rows.map(r => t.columns.map(c => quote(r[c], t.column_types[c])).join(','))].join('\r\n');
 }
 export const OPS: Record<string, string> = {eq: 'is', ne: 'is not', gt: 'more than', ge: 'at least', lt: 'less than', le: 'at most', contains: 'contains', in: 'is one of', between: 'between'};
 export function expectedChip(t: TablePayload, f: {field: string; operator: string; value: Cell | Cell[]}): string {

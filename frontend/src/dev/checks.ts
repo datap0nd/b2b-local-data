@@ -96,7 +96,7 @@ async function tableCheck(h: Harness, kind: 'summary' | 'detail'): Promise<Obser
   // Column menu lists every returned column with its business label.
   const trigger = qa<HTMLButtonElement>(t, 'button').find(b => b.textContent?.trim() === 'Columns') ?? null;
   let menuOk = true, menu: string[] = [];
-  if (trigger) { await openMenu(trigger, h); menu = menuItems().map(i => i.textContent!.trim()); const partners = Object.entries(MERGE).filter(([c, p]) => visible.includes(c) && table.columns.includes(p) && !visible.includes(p)).map(([, p]) => p); const wantMenu = table.columns.filter(c => !partners.includes(c)).map(c => expectedHeader(table, c)); menuOk = [...menu].sort().join('|') === [...wantMenu].sort().join('|') && menu.slice(0, visible.length).join('|') === visible.map(c => expectedHeader(table, c)).join('|'); await closeMenu(h); }
+  if (trigger) { await openMenu(trigger, h); menu = menuItems().map(i => i.textContent!.trim()); const wantMenu = table.columns.map(c => expectedHeader(table, c)); menuOk = [...menu].sort().join('|') === [...wantMenu].sort().join('|') && menu.slice(0, visible.length).join('|') === visible.map(c => expectedHeader(table, c)).join('|'); await closeMenu(h); }
   const keyOk = kind === 'detail' ? observedHeaders[0] === 'Opportunity no.' && observedHeaders[1] === 'Product' : observedHeaders[0] === 'Opportunity';
   const ok = JSON.stringify(observedHeaders) === JSON.stringify(wantHeaders) && observedRows.length === table.rows.length && mismatches.length === 0 && detailsOk && menuOk && keyOk;
   return result(ok, {headers: wantHeaders, rows: table.rows.length, menu: table.columns.length}, {headers: observedHeaders, rows: observedRows.length, mismatches, detailsOk, details, menuOk, menu, keyOk}, `${table.rows.length} returned rows compared cell by cell across pages against independently formatted values; row details and the column menu checked.`);
@@ -276,9 +276,9 @@ async function metricCheck(h: Harness): Promise<Observation> {
   const measures = table.columns.filter(column => MEASURE_LABELS[column]);
   const expected = measures.map(measure => measureText(table, measure, table.rows[0]?.[measure] ?? null));
   const observed = metrics.map(metric => metric.querySelector('dd')?.textContent?.trim());
-  const singlePresentation = !q(h.root, '[data-testid="value-cards"]') && !q(h.root, '[data-testid="result-table"]') && !q(h.root, '[data-testid="scope"]');
+  const singlePresentation = !q(h.root, '[data-testid="value-cards"]') && !q(h.root, '[data-testid="primary-result"] [data-testid="result-table"]') && !q(h.root, '[data-testid="scope"]');
   const ok = JSON.stringify(observed) === JSON.stringify(expected) && singlePresentation;
-  return result(ok, {values: expected, presentations: 1}, {values: observed, singlePresentation}, 'The scalar has one metric presentation with independently formatted values and units; there is no repeated total or table.');
+  return result(ok, {values: expected, presentations: 1}, {values: observed, singlePresentation}, 'The scalar has one metric presentation with independently formatted values and units. Supporting records do not repeat the aggregate result.');
 }
 
 async function emptyCheck(h: Harness): Promise<Observation> {

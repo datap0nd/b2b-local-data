@@ -93,4 +93,12 @@ describe('filter chips and CSV export', () => {
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     expect(csv.slice(1).split('\r\n')).toEqual(['"opportunity_no","comment","opportunity_amount"', '"000123","\'=SUM(A1) ""quoted""","12345678901.55"', '"000124","",""']);
   });
+  it('preserves signed numeric literals exactly while guarding text, IDs, headers and invalid expressions', () => {
+    const numeric = ['-12.50', '+12.50', '-.50', '-12.', '-1.25e-8', '-1+2', ' -12', '-Infinity', '=SUM(A1)', '@VALUE'];
+    const csv = csvText({columns: ['opportunity_no', 'comment', 'amount', '-12.5'], column_types: {opportunity_no: 'text', comment: 'text', amount: 'number', '-12.5': 'number'}}, numeric.map(amount => ({opportunity_no: '-0012', comment: '-CMD', amount, '-12.5': null})));
+    const lines = csv.slice(1).split('\r\n');
+    expect(lines[0]).toBe('"opportunity_no","comment","amount","\'-12.5"');
+    expect(lines.slice(1, 6)).toEqual(numeric.slice(0, 5).map(value => `"'-0012","'-CMD","${value}",""`));
+    expect(lines.slice(6)).toEqual(numeric.slice(5).map(value => `"'-0012","'-CMD","'${value}",""`));
+  });
 });

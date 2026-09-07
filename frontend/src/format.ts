@@ -139,9 +139,10 @@ export function filterText(f: {field: string; operator: string; value: Cell | Ce
   const value = Array.isArray(f.value) ? f.value.map(one).join(f.operator === 'between' ? ' and ' : ', ') : one(f.value);
   return `${label(f.field)} ${OPS[f.operator] ?? f.operator} ${value}`;
 }
-export function csvText(table: TablePayload, rows: Record<string, Cell>[]): string {
-  // Every returned column, the given rows in their order; formula prefixes guarded; values exact.
-  const cell = (value: Cell) => { let text = value == null ? '' : String(value); if (/^[\s]*[=+\-@\t\r]/.test(text)) text = "'" + text; return '"' + text.replaceAll('"', '""') + '"'; };
-  const lines = [table.columns, ...rows.map(row => table.columns.map(c => row[c]))];
-  return '﻿' + lines.map(line => line.map(cell).join(',')).join('\r\n');
+export function csvText(table: Pick<TablePayload, 'columns' | 'column_types'>, rows: Record<string, Cell>[]): string {
+  // Only complete typed numeric literals bypass the formula guard. IDs and headers remain text.
+  const numericLiteral = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
+  const cell = (value: Cell, numeric = false) => { let text = value == null ? '' : String(value); if (!(numeric && numericLiteral.test(text)) && /^[\s]*[=+\-@\t\r]/.test(text)) text = "'" + text; return '"' + text.replaceAll('"', '""') + '"'; };
+  const lines = [table.columns.map(column => cell(column)).join(','), ...rows.map(row => table.columns.map(column => cell(row[column], table.column_types[column] === 'number')).join(','))];
+  return '﻿' + lines.join('\r\n');
 }

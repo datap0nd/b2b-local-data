@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from 'react';
 import {columnPinningFeature, columnSizingFeature, columnVisibilityFeature, createColumnHelper, createPaginatedRowModel, createSortedRowModel, rowPaginationFeature, rowSortingFeature, tableFeatures, useTable, type ColumnVisibilityState, type SortingState} from '@tanstack/react-table';
-import {ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Columns3, Info} from 'lucide-react';
+import {ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Columns3, Info} from 'lucide-react';
 import {Button} from './ui/button';
 import {DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger} from './ui/dropdown-menu';
 import {cellText, compareValues, headerLabel, MERGE, STAGE_GROUPS, visibleColumns} from '@/format';
@@ -27,22 +27,27 @@ export interface ResultTableProps {
   sorting?: SortingState;
   onSorting?: (sorting: SortingState) => void;
   columns?: string[];         // visible columns override
+  sortable?: boolean;
+  busy?: boolean;
+  remotePage?: {index: number; totalRows: number; onChange: (index: number) => void};
 }
 
-export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPageSize, onDetails, onSortChange, onSortedRows, sorting: controlledSorting, onSorting, columns}: ResultTableProps) {
+export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPageSize, onDetails, onSortChange, onSortedRows, sorting: controlledSorting, onSorting, columns, sortable = true, busy = false, remotePage}: ResultTableProps) {
   const visible = columns ?? visibleColumns(table);
   const [localSorting, setLocalSorting] = useState<SortingState>([]);
   const sorting = controlledSorting ?? localSorting;
   const setSorting = onSorting ?? setLocalSorting;
   const [visibility, setVisibility] = useState<ColumnVisibilityState>({});
-  const [pageIndex, setPageIndex] = useState(0);
-  const merged = useMemo(() => Object.fromEntries(visible.map(c => [c, MERGE[c] && table.columns.includes(MERGE[c]) && !visible.includes(MERGE[c]) ? MERGE[c] : null])), [visible, table.columns]);
-  const allColumns = useMemo(() => [...visible, ...table.columns.filter(c => !visible.includes(c) && !Object.values(merged).includes(c))], [visible, table.columns, merged]);
+  const [localPageIndex, setLocalPageIndex] = useState(0);
+  const pageIndex = remotePage?.index ?? localPageIndex;
+  const setPageIndex = remotePage?.onChange ?? setLocalPageIndex;
+  const merged = useMemo(() => Object.fromEntries(visible.map(c => [c, MERGE[c] && table.columns.includes(MERGE[c]) && !visible.includes(MERGE[c]) && visibility[MERGE[c]] !== true ? MERGE[c] : null])), [visible, table.columns, visibility]);
+  const allColumns = useMemo(() => [...visible, ...table.columns.filter(c => !visible.includes(c))], [visible, table.columns]);
   const columnDefs = useMemo(() => helper.columns(allColumns.map(column => helper.accessor(row => (row[column] ?? undefined) as Cell, {
     id: column,
     header: headerLabel(table, column),
     size: WIDTHS[column] ?? (table.column_types[column] === 'number' ? 120 : 160),
-    enableSorting: true,
+    enableSorting: sortable && !(table.metadata.evidence?.amount_complete === false && ['opportunity_amount', 'sku_amount', 'amount'].includes(column)),
     sortFn: (a, b) => compareValues(a.getValue(column) as Cell, b.getValue(column) as Cell, table.column_types[column] ?? 'text'),
     sortUndefined: 'last',
     cell: ctx => {
@@ -54,7 +59,7 @@ export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPa
       if (column === 'has_quality_warning' || column === 'has_amount_discrepancy') return row[column] == null ? <span className="text-ink-3">—</span> : <span className={cn('inline-block rounded-md px-1.5 py-0.5 text-xs font-medium', row[column] ? 'bg-warn-soft text-warn' : 'bg-surface-2 text-ink-2')}>{text}</span>;
       return <span className={cn(row[column] == null && 'text-ink-3', table.column_types[column] === 'number' && 'tabular')}>{text}</span>;
     },
-  }))), [allColumns, merged, table]);
+  }))), [allColumns, merged, table, sortable]);
 
   const hidden = useMemo(() => Object.fromEntries(allColumns.map(c => [c, visibility[c] ?? visible.includes(c)])), [allColumns, visibility, visible]);
   const t = useTable({
@@ -64,9 +69,12 @@ export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPa
     onColumnVisibilityChange: updater => setVisibility((prev: ColumnVisibilityState) => (typeof updater === 'function' ? updater(prev) : updater)),
     onPaginationChange: updater => { const next = typeof updater === 'function' ? updater({pageIndex, pageSize}) : updater; setPageIndex(next.pageIndex); if (next.pageSize !== pageSize) onPageSize?.(next.pageSize); },
     enableColumnPinning: true,
+    manualPagination: !!remotePage,
+    manualSorting: !!remotePage || !sortable,
+    enableMultiSort: !remotePage,
   });
   const pageRows = t.getRowModel().rows;
-  const pageCount = Math.max(1, Math.ceil(rows.length / (mode === 'preview' ? 8 : pageSize)));
+  const pageCount = Math.max(1, Math.ceil((remotePage?.totalRows ?? rows.length) / (mode === 'preview' ? 8 : pageSize)));
   const shownColumns = t.getVisibleLeafColumns();
   const sortedRows = t.getSortedRowModel().rows;
   useEffect(() => { onSortedRows?.(sortedRows.map(row => row.original)); }, [sortedRows, onSortedRows]);
@@ -77,7 +85,7 @@ export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPa
         <div className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
           <span data-testid="page-summary">Page {pageIndex + 1} of {pageCount}</span>
           <label className="ml-auto flex items-center gap-2">Rows per page
-            <select value={pageSize} onChange={e => { onPageSize?.(Number(e.target.value)); setPageIndex(0); }} aria-label="Rows per page" className="h-8 rounded-md border border-line bg-canvas px-2 text-sm text-ink">
+            <select value={pageSize} disabled={busy} onChange={e => { onPageSize?.(Number(e.target.value)); setPageIndex(0); }} aria-label="Rows per page" className="h-8 rounded-md border border-line bg-canvas px-2 text-sm text-ink">
               {[25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </label>
@@ -88,8 +96,10 @@ export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPa
               {allColumns.map(c => <DropdownMenuCheckboxItem key={c} checked={hidden[c]} onCheckedChange={v => setVisibility((prev: ColumnVisibilityState) => ({...prev, [c]: !!v}))} disabled={c === visible[0]}>{headerLabel(table, c)}</DropdownMenuCheckboxItem>)}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" size="icon-sm" aria-label="Previous page" disabled={pageIndex === 0} onClick={() => setPageIndex(i => i - 1)}><ChevronLeft /></Button>
-          <Button variant="outline" size="icon-sm" aria-label="Next page" disabled={pageIndex >= pageCount - 1} onClick={() => setPageIndex(i => i + 1)}><ChevronRight /></Button>
+          {remotePage && <Button variant="outline" size="icon-sm" aria-label="First page" disabled={busy || pageIndex === 0} onClick={() => setPageIndex(0)}><ChevronsLeft /></Button>}
+          <Button variant="outline" size="icon-sm" aria-label="Previous page" disabled={busy || pageIndex === 0} onClick={() => setPageIndex(pageIndex - 1)}><ChevronLeft /></Button>
+          <Button variant="outline" size="icon-sm" aria-label="Next page" disabled={busy || pageIndex >= pageCount - 1} onClick={() => setPageIndex(pageIndex + 1)}><ChevronRight /></Button>
+          {remotePage && <Button variant="outline" size="icon-sm" aria-label="Last page" disabled={busy || pageIndex >= pageCount - 1} onClick={() => setPageIndex(pageCount - 1)}><ChevronsRight /></Button>}
         </div>
       )}
       <div className={cn('rounded-lg border border-line', mode === 'full' ? 'overflow-auto scroll-thin' : 'overflow-x-auto overflow-y-hidden')}>
@@ -104,10 +114,10 @@ export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPa
                   return (
                     <th key={header.id} scope="col" aria-sort={sort === 'asc' ? 'ascending' : sort === 'desc' ? 'descending' : 'none'} data-column={header.column.id}
                       style={{width: header.getSize(), minWidth: header.getSize(), left: pinned ? 0 : undefined}}
-                      className={cn('sticky top-0 z-10 border-b border-line bg-surface px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-ink-2', pinned && 'left-0 z-20 shadow-[1px_0_0_var(--color-line)]', numeric && 'text-right')}>
-                      <button type="button" onClick={header.column.getToggleSortingHandler()} className={cn('inline-flex max-w-full items-center gap-1 whitespace-nowrap hover:text-ink', numeric && 'justify-end')}>
+                      className={cn('sticky top-0 z-10 border-b border-line bg-surface px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-ink-2', pinned && 'max-sm:!left-auto sm:left-0 sm:z-20 sm:shadow-[1px_0_0_var(--color-line)]', numeric && 'text-right')}>
+                      <button type="button" disabled={busy || !header.column.getCanSort()} onClick={header.column.getToggleSortingHandler()} className={cn('inline-flex max-w-full items-center gap-1 whitespace-nowrap hover:text-ink', numeric && 'justify-end')}>
                         <span className="truncate">{header.isPlaceholder ? null : <t.FlexRender header={header} />}</span>
-                        {sort === 'asc' ? <ArrowUp className="size-3" /> : sort === 'desc' ? <ArrowDown className="size-3" /> : <ArrowUpDown className="size-3 opacity-40" />}
+                        {header.column.getCanSort() && (sort === 'asc' ? <ArrowUp className="size-3" /> : sort === 'desc' ? <ArrowDown className="size-3" /> : <ArrowUpDown className="size-3 opacity-40" />)}
                       </button>
                     </th>
                   );
@@ -124,7 +134,7 @@ export function ResultTable({table, rows = table.rows, mode, pageSize = 50, onPa
                   const numeric = table.column_types[cell.column.id] === 'number' && !merged[cell.column.id];
                   return (
                     <td key={cell.id} style={{width: cell.column.getSize(), minWidth: cell.column.getSize(), left: pinned ? 0 : undefined}}
-                      className={cn('border-b border-line bg-canvas px-3 py-1.5 align-middle', pinned && 'sticky left-0 z-10 shadow-[1px_0_0_var(--color-line)]', numeric ? 'text-right tabular' : 'truncate')}>
+                      className={cn('border-b border-line bg-canvas px-3 py-1.5 align-middle', pinned && 'sm:sticky sm:left-0 sm:z-10 sm:shadow-[1px_0_0_var(--color-line)]', numeric ? 'text-right tabular' : 'truncate')}>
                       <t.FlexRender cell={cell} />
                     </td>
                   );

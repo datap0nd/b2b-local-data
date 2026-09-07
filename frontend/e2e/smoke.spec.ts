@@ -16,6 +16,7 @@ test.describe('conversation workspace against demo backend', () => {
     await expect(turn.getByTestId('metrics')).toHaveCount(0);
     await expect(turn.getByTestId('freshness')).toHaveCount(0);
     await expect(turn.getByTestId('scope')).toHaveCount(1);
+    await expect(turn.getByTestId('supporting-records')).toHaveCount(0);
     await expect(turn.getByTestId('result-table').locator('thead th').first()).toContainText('Opportunity');
     await expect(page.getByTestId('freshness').filter({visible: true}).first()).toBeVisible();
     await page.screenshot({path: info.outputPath('row-preview.png'), fullPage: true});
@@ -45,11 +46,12 @@ test.describe('conversation workspace against demo backend', () => {
     await page.getByRole('button', {name: 'Amount by stage group', exact: true}).click();
     const card = page.getByTestId('result-card').last();
     await expect(card.getByTestId('result-chart').locator('svg').first()).toBeVisible();
-    await expect(card.getByTestId('result-table')).toHaveCount(0);
+    await expect(card.getByTestId('primary-result').getByTestId('result-table')).toHaveCount(0);
+    await expect(card.getByTestId('supporting-preview').getByTestId('result-table')).toBeVisible();
     await page.screenshot({path: info.outputPath('chart.png'), fullPage: true});
     await card.getByRole('button', {name: 'Data', exact: true}).click();
     await expect(card.getByTestId('result-chart')).toHaveCount(0);
-    await expect(card.getByTestId('result-table')).toHaveCount(1);
+    await expect(card.getByTestId('primary-result').getByTestId('result-table')).toHaveCount(1);
     await card.getByRole('button', {name: 'Chart', exact: true}).click();
     await card.getByRole('button', {name: 'Download chart'}).click();
     const download = page.waitForEvent('download');

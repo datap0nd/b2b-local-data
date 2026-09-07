@@ -15,20 +15,60 @@ from time import monotonic
 from urllib.parse import urlsplit
 import uuid
 
-from acceptance_suite import BROWSER_CHECKS, STEPS, SUITE_VERSION, blocked_reason, check_clarification, match_plan, reference_spec, render_prompt, select_witnesses
+from acceptance_suite import BROWSER_CHECKS, DETAIL_DEFAULT, STEPS, SUMMARY_DEFAULT, SUITE_VERSION, blocked_reason, check_clarification, match_plan, reference_spec, render_prompt, select_witnesses
 from app_config import APP_VERSION, ROOT, AppError
 from data_layer import OPPORTUNITY_COLUMNS, RAW_COLUMNS, SKU_COLUMNS, SOURCE_FIELDS, build_canonical_views
 from history_store import HistoryStore
 from query_engine import CALCULATION_VERSION, result_digest
-from reference_evaluator import DIGEST_VERSION, EVALUATOR_VERSION, FINGERPRINT_FIELDS, FINGERPRINT_VERSION, ReferenceSource, compare, compare_grains, evaluate
+from reference_evaluator import DIGEST_VERSION, EVALUATOR_VERSION, FINGERPRINT_FIELDS, FINGERPRINT_VERSION, ReferenceSource, compare, compare_grains, evaluate, evaluate_supporting
 from reference_evaluator import OPPORTUNITY_COLUMNS as REFERENCE_OPPORTUNITY_COLUMNS, SKU_COLUMNS as REFERENCE_SKU_COLUMNS
 
-REPORT_VERSION = 'report-2'
+REPORT_VERSION = 'report-3'
 MAX_RUNS_LISTED = 50
 # Everything that must stay identical across the three qualifying runs.
 IDENTITY_KEYS = ('source_fingerprint', 'app_revision', 'suite_version', 'evaluator_version', 'digest_version', 'calculation_version', 'source_contract_verified', 'rules_digest', 'model_config', 'prompt_digest', 'effective_date')
 STEP_STATES = ('pass', 'fail', 'error', 'review', 'blocked', 'not_applicable', 'pending')
 EXECUTED_STATES = ('pass', 'fail', 'error', 'review')
+
+
+def compare_supporting(expected, outcome):
+    """Validate raw supporting tables against authored, independent expectations.
+
+    This runs before the API's 25-row public preview. Every supporting cell is
+    checked, including rows after the primary result's limit. Identical primary
+    totals cannot conceal missing evidence, wrong membership, or another snapshot.
+    """
+    supporting = outcome.get('supporting') or {}
+    views = supporting.get('views') or {}
+    primary = outcome['table']
+    primary_meta = primary.get('metadata') or {}
+    checks = {'contract': supporting.get('version') == 1 and supporting.get('available') is True,
+              'default_view': supporting.get('default_view') == 'summary',
+              'views': set(views) == {'summary', 'detail'}}
+    comparisons = {}
+    for view, wanted in expected.items():
+        actual = views.get(view)
+        if not isinstance(actual, dict) or 'rows' not in actual:
+            comparisons[view] = {'ok': False, 'checks': {'available': False},
+                                 'differences': [{'kind': 'supporting_view_missing', 'view': view}], 'counts': {}}
+            continue
+        result = compare(wanted, actual)
+        metadata = actual.get('metadata') or {}
+        evidence = metadata.get('evidence') or {}
+        result['checks']['complete_raw_rows'] = actual.get('truncated') is False and len(actual['rows']) == wanted['total']
+        result['checks']['view'] = actual.get('view') == view
+        result['checks']['scope'] = (evidence.get('role') == 'supporting'
+                                    and evidence.get('source_grain') == wanted['source_grain']
+                                    and evidence.get('data_scope') == wanted['data_scope']
+                                    and (actual.get('views') or {}).get('scope_label') == ('All products in matching opportunities' if wanted['data_scope'] == 'all_products' else 'Matching products only'))
+        result['checks']['default_columns'] = evidence.get('default_columns') == (SUMMARY_DEFAULT if view == 'summary' else DETAIL_DEFAULT)
+        result['checks']['answer_identity'] = evidence.get('source_result_digest') == primary.get('result_digest')
+        result['checks']['snapshot_identity'] = all(key in metadata and key in primary_meta and metadata[key] == primary_meta[key]
+                                                   for key in ('fingerprint', 'freshness', 'data_contract_version', 'calculation_version'))
+        result['ok'] = all(result['checks'].values())
+        comparisons[view] = result
+    return {'ok': all(checks.values()) and all(item['ok'] for item in comparisons.values()),
+            'checks': checks, 'views': comparisons}
 
 
 def now():
@@ -376,6 +416,12 @@ class AcceptanceRunner:
         spec = reference_spec(step, variant, run['witnesses'])
         expected = evaluate(snapshot['reference'], spec)
         comparison = compare(expected, table)
+        supporting_expected = None
+        if spec['intent'] in ('metric', 'chart'):
+            supporting_expected = evaluate_supporting(snapshot['reference'], spec)
+            comparison['supporting'] = compare_supporting(supporting_expected, outcome)
+            comparison['checks']['supporting_rows'] = comparison['supporting']['ok']
+            comparison['ok'] = comparison['ok'] and comparison['checks']['supporting_rows']
         if step['expect']['intent'] == 'chart':
             chart = table.get('chart') or {}
             comparison['checks']['chart_spec'] = chart.get('type') == step['expect']['chart_type'] and set(chart.get('measures', [])) == set(spec['measures']) and list(chart.get('dimensions', [])) == list(spec['group'])
@@ -383,6 +429,11 @@ class AcceptanceRunner:
         record['data'] = jsonable(comparison)
         record['reference_spec'] = jsonable(spec)
         record['result'] = self._result_summary(table, expected)
+        if supporting_expected is not None:
+            views = (outcome.get('supporting') or {}).get('views') or {}
+            record['result']['supporting'] = {view: self._result_summary(views[view], wanted)
+                                               for view, wanted in supporting_expected.items()
+                                               if isinstance(views.get(view), dict) and 'rows' in views[view]}
         record['status'] = 'pass' if ok and comparison['ok'] else 'fail'
         if record['status'] != 'pass':
             self._block_followups(run, index, 'An earlier turn of this conversation failed its interpretation or data check.')
@@ -704,6 +755,22 @@ class AcceptanceRunner:
                 lines += ['Expected rows (first 10):', '', md_table(expected['columns'], expected['rows']), '']
         if data and data.get('differences'):
             lines += ['Keyed differences (first 20):', '', '```json', json.dumps(data['differences'], ensure_ascii=False, indent=1)[:8000], '```', '']
+        if data and data.get('supporting'):
+            evidence = data['supporting']
+            checks = ', '.join(f"{key}={'ok' if value else 'FAIL'}" for key, value in evidence.get('checks', {}).items())
+            lines += [f"Supporting rows: **{'pass' if evidence.get('ok') else 'fail'}** — {md(checks)}. Independently checked from the authored question's complete matching population.", '']
+            for view, comparison in evidence.get('views', {}).items():
+                checks = ', '.join(f"{key}={'ok' if value else 'FAIL'}" for key, value in comparison.get('checks', {}).items())
+                summary = (result or {}).get('supporting', {}).get(view, {})
+                wanted = summary.get('expected') or {}
+                lines += [f"{view.capitalize()}: **{'pass' if comparison.get('ok') else 'fail'}** — {md(checks)}", '',
+                          md_table(['Supporting evidence', 'Expected', 'Actual'], [
+                              ['Complete row count', wanted.get('total_rows', ''), summary.get('total_rows', '')],
+                              ['Full-result digest', wanted.get('digest', ''), summary.get('result_digest', '')],
+                              ['Complete totals', json.dumps(wanted.get('totals'), ensure_ascii=False), json.dumps(summary.get('totals'), ensure_ascii=False)],
+                              ['Rows checked cell by cell', wanted.get('total_rows', ''), summary.get('rows_checked', '')]]), '']
+                if comparison.get('differences'):
+                    lines += ['Supporting-row differences (first 20):', '', '```json', json.dumps(comparison['differences'], ensure_ascii=False, indent=1)[:8000], '```', '']
         if data and data.get('counts'):
             lines += ['Comparison counts: `' + json.dumps(data['counts'], ensure_ascii=False) + '`', '']
         if s.get('warnings'):

@@ -578,6 +578,43 @@ def evaluate_view(source, spec, view):
             'digest': digest_rows(complete, columns), 'limit': limit, 'kinds': {c: column_kind(c) for c in columns}}
 
 
+def evaluate_supporting(source, spec):
+    """Independent complete evidence for an authored aggregate specification.
+
+    Freeze membership at the original grain exactly once. Aggregate grouping,
+    ranking, and preview limits do not select evidence rows, and a whole-opportunity
+    threshold must not be reapplied to its individual products. At SKU grain the
+    summary is a subtotal of the matching products, not an expanded parent total.
+    These are the public canonical columns from the published contract, not columns
+    or plans adopted from the production response.
+    """
+    if spec['intent'] not in ('metric', 'chart'):
+        raise ValueError('Supporting rows apply to aggregate results.')
+    original_grain = spec['grain']
+    matching = apply_filters(source, original_grain, spec.get('filters', []))
+    if original_grain == 'opportunity':
+        keep = {row['opportunity_no'] for row in matching}
+        populations = {'summary': matching, 'detail': [row for row in source.sku if row['opportunity_no'] in keep]}
+        scope = 'all_products'
+    else:
+        populations = {'summary': summarize_matching_products(source, matching), 'detail': matching}
+        scope = 'matching_products'
+    result = {}
+    for view, population in populations.items():
+        grain = 'opportunity' if view == 'summary' else 'sku'
+        keys = ['opportunity_no'] if view == 'summary' else ['opportunity_no', 'product_code']
+        columns = list(OPPORTUNITY_COLUMNS if view == 'summary' else SKU_COLUMNS) + ['stage_group']
+        getter = lambda row, field: value_of(row, field, grain, source)
+        ordered = sort_rows(population, [(key, True) for key in keys], getter)
+        complete = [{column: getter(row, column) for column in columns} for row in ordered]
+        totals = {'amount': complete_amount(ordered, grain), 'quantity': r_sum([row['quantity'] for row in ordered]),
+                  'opportunity_count': distinct_count([row['opportunity_no'] for row in ordered]), 'rows': len(ordered)}
+        result[view] = {'columns': columns, 'keys': keys, 'rows': complete, 'total': len(ordered), 'totals': totals,
+                        'digest': digest_rows(complete, columns), 'kinds': {column: column_kind(column) for column in columns},
+                        'data_scope': scope, 'source_grain': 'opportunity' if original_grain == 'opportunity' else 'opportunity_sku'}
+    return result
+
+
 def compare(expected, actual, max_differences=20):
     """Compare a production result payload with the reference result: typed cells, keyed rows, order, counts, totals, digest."""
     differences, checks = [], {}

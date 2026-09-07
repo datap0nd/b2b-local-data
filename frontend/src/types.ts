@@ -25,6 +25,7 @@ export interface ResultMetadata {
   version: 2;
   calculation_version?: number;
   sort?: {field: string; direction: 'asc' | 'desc'}[];
+  evidence?: {role: 'supporting'; source_result_digest: string; source_grain: Grain; data_scope: 'all_products' | 'matching_products'; default_columns: string[]; amount_complete?: boolean};
   currency: { code: string | null; mixed: boolean; codes: Record<string, number>; source: string };
   complete: { rows: number; opportunities?: number; sku_pairs?: number | null; quantity?: string | null; groups?: number; by_currency?: Record<string, { amount: string | null; quantity: string | null; opportunities: number; rows: number }> };
   warnings: QualityWarning[];
@@ -65,6 +66,8 @@ export interface TablePayload {
 
 export interface Metric { label: string; value: string; raw: Cell; currency?: string | null; note?: string }
 export interface AnswerText { title: string; context?: string; sentence: string; metrics: Metric[] }
+export interface SupportingData { version?: number; available: boolean; default_view?: ViewName; views?: Partial<Record<ViewName, TablePayload>>; message?: string; can_rerun?: boolean }
+export type SupportingPage = {available: true; view: ViewName; page: number; page_size: number; total_rows: number; table: TablePayload} | {available: false; message: string};
 
 export interface AnswerPayload {
   kind: 'table';
@@ -74,6 +77,7 @@ export interface AnswerPayload {
   variants: Record<string, TablePayload | { error: string }>;
   answer: AnswerText;
   suggestions: string[];
+  supporting?: SupportingData;
   plan?: unknown;
   contract_version?: number;
   rerun_of?: number | null;

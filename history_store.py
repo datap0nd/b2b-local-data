@@ -9,17 +9,56 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import uuid
 import zlib
 
 from app_config import AppError
-from query_engine import CALCULATION_VERSION, parse_plan
+from query_engine import CALCULATION_VERSION, LINE_AMOUNT_FIELDS, parse_plan, typed_value
 
 SCHEMA_VERSION=3
 MAX_RESULT_BYTES=6_000_000   # compressed payload bound per saved answer
 PREVIEW_ROWS=1000
+CSV_NUMBER=re.compile(r'^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$')
+
+
+class SavedResultTooLarge(AppError):
+    """The compressed evidence exceeded the explicit per-answer storage bound."""
+
+
+def ordered_supporting_rows(table,sort=None,direction='asc'):
+    """Sort frozen serialized business values exactly, with stable identifier ties."""
+    if direction not in ('asc','desc'):
+        raise AppError('Choose ascending or descending order.')
+    if sort is not None and sort not in table.get('columns',[]):
+        raise AppError('That supporting-data sort column is not available.')
+    if sort in LINE_AMOUNT_FIELDS and (((table.get('metadata') or {}).get('evidence') or {}).get('amount_complete') is False):
+        raise AppError('Some supporting amounts are incomplete or have conflicting currencies. Choose another sort column to review those rows.')
+    keys=['opportunity_no']+(['product_code'] if table.get('grain')=='opportunity_sku' else [])
+    rows=sorted(table.get('rows') or [],key=lambda row:tuple(str(row.get(key) or '') for key in keys))
+    if sort is None:
+        return rows
+    nonnull=[row for row in rows if row.get(sort) is not None]
+    nulls=[row for row in rows if row.get(sort) is None]
+    # typed_value uses Decimal for numeric business fields and keeps IDs as text.
+    nonnull.sort(key=lambda row:typed_value(sort,row[sort]),reverse=direction=='desc')
+    return nonnull+nulls
+
+
+def supporting_csv(table,rows):
+    """Same BOM, CRLF, quote-all and formula guard as frontend csvText; no floats."""
+    def cell(value,kind='text'):
+        text='' if value is None else ('true' if value else 'false') if isinstance(value,bool) else str(value)
+        numeric=kind=='number' and CSV_NUMBER.fullmatch(text) is not None
+        if not numeric and re.match(r'^\s*[=+\-@\t\r]',text):
+            text="'"+text
+        return '"'+text.replace('"','""')+'"'
+    kinds=table.get('column_types') or {}
+    lines=[','.join(cell(column) for column in table['columns'])]
+    lines.extend(','.join(cell(row.get(column),kinds.get(column,'text')) for column in table['columns']) for row in rows)
+    return '\ufeff'+'\r\n'.join(lines)
 
 
 class HistoryStore:
@@ -187,7 +226,7 @@ class HistoryStore:
         """Persist a compressed, bounded answer (primary table, variants, answer text) with its provenance."""
         body=json.dumps(payload,ensure_ascii=False,separators=(',',':')).encode('utf-8')
         blob=zlib.compress(body,6)
-        if len(blob)>MAX_RESULT_BYTES: raise AppError('The answer is too large to save with the conversation.')
+        if len(blob)>MAX_RESULT_BYTES: raise SavedResultTooLarge('The answer is too large to save with the conversation.')
         with self.connect() as connection:
             self._owned(connection,owner,session)
             if connection.execute('SELECT 1 FROM turns WHERE id=? AND session_id=?',(turn_id,session)).fetchone() is None: raise AppError('That answer does not exist in this conversation.')
@@ -202,6 +241,26 @@ class HistoryStore:
         if row is None: return None
         payload=json.loads(zlib.decompress(row['payload']).decode('utf-8'))
         return {'kind':row['kind'],'plan':json.loads(row['plan']) if row['plan'] else None,'fingerprint':row['fingerprint'],'freshness':json.loads(row['freshness']) if row['freshness'] else None,'saved_at':row['created_at'],**payload}
+
+    def load_supporting(self,owner,session,turn_id,view='summary'):
+        """Read only this owner's frozen evidence; never query a current snapshot."""
+        if view not in ('summary','detail'):
+            raise AppError('Choose summary or detail supporting data.')
+        saved=self.load_result(owner,session,turn_id)
+        if saved is None:
+            self.turn(owner,session,turn_id)
+            return {'available':False,'can_rerun':True,'message':'Supporting data was not retained for this answer. Run with current data to create a new answer and supporting list.'}
+        if ((saved.get('table') or {}).get('metadata') or {}).get('calculation_version')!=CALCULATION_VERSION:
+            return {'available':False,'can_rerun':True,'message':'This answer used earlier calculations. Run with current data to create corrected supporting data.'}
+        supporting=saved.get('supporting')
+        if not supporting:
+            return {'available':False,'can_rerun':True,'message':'This saved answer predates supporting lists. Run with current data to create one.'}
+        if not supporting.get('available'):
+            return {key:value for key,value in supporting.items() if key!='views'}
+        table=(supporting.get('views') or {}).get(view)
+        if not table or len(table.get('rows') or [])!=table.get('total_rows'):
+            return {'available':False,'can_rerun':True,'message':'The complete supporting list is not retained for this answer. Run with current data to create a new one.'}
+        return {'available':True,'view':view,'table':table}
 
     def rename(self,owner,session,title):
         title=(title or '').strip()[:100]

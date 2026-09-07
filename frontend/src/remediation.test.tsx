@@ -7,6 +7,7 @@ import {TooltipProvider} from './components/ui/tooltip';
 import {fixtureAnswer, fixtureTable} from './testFixtures';
 import {useFreshness} from './useFreshness';
 import {api} from './api';
+import * as utilities from './lib/utils';
 import type {Freshness as FreshnessInfo, QualityWarning} from './types';
 
 vi.mock('./components/ResultChart', () => ({ResultChart: () => <div data-testid="result-chart" />}));
@@ -103,5 +104,12 @@ describe('saved quality evidence', () => {
     expect(screen.getByTestId('quality-incomplete').textContent).toContain('1 of 61');
     expect(screen.getByText('Detailed reasons were not saved with this answer.')).toBeTruthy();
     expect(qualityRows(legacy)[0].product_total).toBeNull();
+  });
+  it('exports negative quality amounts as exact numeric values while guarding identifiers', () => {
+    const exported = vi.spyOn(utilities, 'download').mockImplementation(() => {});
+    render(<QualityPanel warning={{code: 'quality_warning', count: 1, message: 'Invented evidence', records: [{opportunity_no: '-0012', issues: [{code: 'amount_mismatch', message: 'Invented mismatch', product_total: '-12.50', exported_total: '-12.00', difference: '-0.50'}]}]}} open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', {name: 'Download review'}));
+    expect(exported.mock.calls[0][1]).toContain('"-12.50","-12.00","-0.50"');
+    expect(exported.mock.calls[0][1]).toContain('"\'-0012"');
   });
 });

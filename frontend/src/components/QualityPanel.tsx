@@ -4,7 +4,7 @@ import {Dialog, DialogContent} from './ui/dialog';
 import {Button} from './ui/button';
 import {csvText, formatNumber, label} from '@/format';
 import {download} from '@/lib/utils';
-import type {QualityIssue, QualityWarning, Row, TablePayload} from '@/types';
+import type {QualityIssue, QualityWarning, Row} from '@/types';
 
 const PAGE_SIZE = 20;
 const valuesText = (values: unknown): string => values == null ? '' : typeof values === 'object' ? JSON.stringify(values) : String(values);
@@ -53,7 +53,7 @@ export function QualityPanel({warning, open, onClose}: {warning: QualityWarning;
   const complete = warning.records.length >= warning.count;
   function exportReview() {
     const columns = ['opportunity_no', 'opportunity_name', 'product_code', 'reason', 'field', 'values', 'product_total', 'exported_total', 'difference', 'currency', 'inclusion'];
-    download('b2b-quality-review.csv', csvText({columns} as TablePayload, qualityRows(warning)), 'text/csv;charset=utf-8');
+    download('b2b-quality-review.csv', csvText({columns, column_types: {product_total: 'number', exported_total: 'number', difference: 'number'}}, qualityRows(warning)), 'text/csv;charset=utf-8');
   }
   return <Dialog open={open} onOpenChange={value => { if (!value) onClose(); }}>
     <DialogContent side="right" title="Opportunity review" className="w-[min(920px,100vw)]" aria-describedby="quality-intro">

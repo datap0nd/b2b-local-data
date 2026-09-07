@@ -33,10 +33,10 @@ def default_suggestions(table):
     kind=table.get('result_kind');presentation=table.get('presentation');filters=table.get('filters') or []
     dims=[c for c in table.get('columns',[]) if c not in MEASURE_LABELS] if kind=='aggregate' else []
     if kind=='rows': items=['Total amount by owner','How many opportunities per status?','Amount by closing month']
-    elif not dims: items=['Break the total down by owner','Break the total down by opportunity status','Show the matching opportunities']
+    elif not dims: items=['Break the total down by owner','Break the total down by opportunity status','Break the total down by closing month']
     else:
-        other='opportunity status' if 'stage_group' not in dims else 'owner'
-        items=['Show the opportunities behind that result',f'Show the same values by {other}','Show those values as a table' if presentation=='chart' else 'Chart those values as a bar chart']
+        alternatives=[name for field,name in [('opportunity_owner','owner'),('stage_group','opportunity status'),('close_month','closing month'),('end_customer','customer')] if field not in dims]
+        items=[f'Show the same values by {name}' for name in alternatives[:2]]+['Show those values as a table' if presentation=='chart' else 'Chart those values as a bar chart']
     if filters: items[-1]=f'Remove the {label(filters[-1].get("field")).lower()} restriction'
     return items[:3]
 

@@ -455,7 +455,44 @@ class QueryExecutor:
         active,sku,opportunity=self._prepare(views,plan)
         return self._project(views,plan,active,sku,opportunity)
 
-    def _project(self,views,plan,active,sku,opportunity,view_scope=None):
+    def execute_with_supporting(self,views,plan):
+        """Aggregate and evidence share one already-filtered population and snapshot.
+
+        Changing the plan's grain and reapplying predicates would change the meaning
+        of an opportunity amount threshold or a product-only selection. Freeze the
+        selected business rows first, then derive the two evidence views from them.
+        """
+        validate_execution(plan)
+        active,sku,opportunity=self._prepare(views,plan)
+        table=self._project(views,plan,active,sku,opportunity)
+        if plan.result_kind!=ResultKind.AGGREGATE:
+            return table,None
+        if plan.grain==Grain.OPPORTUNITY:
+            summary=active.copy()
+            detail=sku.loc[sku.opportunity_no.isin(active.opportunity_no)].copy()
+            detail['amount']=detail['sku_amount']
+            detail['deal_size']=detail.opportunity_no.map(opportunity.set_index('opportunity_no')[DEAL_SIZE_FIELD])
+            scope='all_products'
+        else:
+            detail=active.copy()
+            summary=summarize_matching_products(active,opportunity)
+            scope='matching_products'
+        supporting={}
+        for view,grain,frame,public_columns in [('summary',Grain.OPPORTUNITY,summary,OPPORTUNITY_COLUMNS),
+                                                ('detail',Grain.OPPORTUNITY_SKU,detail,SKU_COLUMNS)]:
+            columns=list(public_columns)+['stage_group']
+            # Original filters remain provenance only. _project never reapplies
+            # them, and the aggregate preview/group limit is deliberately absent.
+            evidence_plan=QueryPlanV2(result_kind=ResultKind.ROWS,presentation=Presentation.TABLE,grain=grain,
+                                     filters=list(plan.filters))
+            evidence=self._project(views,evidence_plan,frame,sku,opportunity,view_scope=scope,preview_limit=max(len(frame),1),selected_columns=columns)
+            evidence['metadata']['evidence']={'role':'supporting','source_result_digest':table['result_digest'],
+                                             'source_grain':plan.grain.value,'data_scope':scope,'default_columns':list(DEFAULT_COLUMNS[grain]),
+                                             'amount_complete':not any(frame[name].any() for name in ('has_missing_line_amount','has_invalid_amount_currency') if name in frame)}
+            supporting[view]=evidence
+        return table,{'version':1,'available':True,'default_view':'summary','views':supporting}
+
+    def _project(self,views,plan,active,sku,opportunity,view_scope=None,preview_limit=None,selected_columns=None):
         if any(s.field in LINE_AMOUNT_FIELDS for s in plan.sort): require_complete_amount(active)
         source_rows=int(sum(present(active.source_row_count)))
         quality_count=sum(bool(value) for value in present(active.has_quality_warning))
@@ -476,7 +513,8 @@ class QueryExecutor:
             require_complete_amount(active)
         if plan.result_kind==ResultKind.ROWS:
             defaults=list(DEFAULT_COLUMNS[plan.grain])
-            if plan.columns.mode==ColumnMode.ONLY: columns=list(plan.columns.fields)
+            if selected_columns is not None: columns=list(selected_columns)
+            elif plan.columns.mode==ColumnMode.ONLY: columns=list(plan.columns.fields)
             elif plan.columns.mode==ColumnMode.INCLUDE: columns=defaults+[f for f in plan.columns.fields if f not in defaults]
             else: columns=defaults
             for measure in plan.measures:
@@ -520,7 +558,7 @@ class QueryExecutor:
         if order and not result.empty:
             result=result.sort_values([f for f,_ in order],ascending=[ascending for _,ascending in order],na_position='last',kind='stable')
         total=len(result)
-        limit=plan.limit or 1000
+        limit=(plan.limit or 1000) if preview_limit is None else preview_limit
         complete=result.loc[:,columns].to_dict('records')
         digest=result_digest(complete,columns)
         # Complete-result totals let a viewer compare a preview against everything that matched.
@@ -695,6 +733,7 @@ PROMPT_EXAMPLES='''Examples (question -> plan fields):
 - "Show only the rows for product P-100, with their quantity and amount" -> rows at opportunity_sku grain, filter product_code eq P-100, columns {mode default} (quantity and amount are default columns; "with" keeps the defaults).
 - "Show the opportunities with their deal size" -> rows, columns {mode include, fields [deal_size_on_pricing_date_usd]}.
 - "How many opportunities does each owner have?" -> aggregate, presentation table, group_by [opportunity_owner], measures [opportunity_count].
+- "How many open opportunities close in 2026 above 100K, and show me the matching opportunities?" -> aggregate, presentation cards, grain opportunity, measures [opportunity_count], filters [stage_group eq Open, close_month between 2026-01-01 and 2026-12-31, amount gt 100000]. The supporting opportunities and products are included automatically.
 - "Chart the total amount by stage group as a bar chart" -> aggregate, presentation chart, chart_type bar, group_by [stage_group], measures [amount].
 - "What is the total amount?" -> aggregate, presentation cards, group_by [], measures [amount].
 - Follow-up "Show those exact grouped values as a table instead of a chart" -> refine with presentation table only (result_kind stays aggregate; group_by and measures unchanged).
@@ -716,6 +755,7 @@ class PlannerClient:
 Contract: {json.dumps(QueryPlanV2.model_json_schema())}
 result_kind rows = one row per opportunity (grain opportunity) or per opportunity/product pair (grain opportunity_sku). result_kind aggregate = grouped or overall measures. result_kind clarify = ask a question instead.
 presentation: rows are always a table. Aggregates are a table (one row per group), a chart (needs chart_type and exactly one group_by dimension; scatter needs two measures), or cards (an ungrouped aggregate, group_by empty). A "table" of an aggregate keeps its grouping; it never means the underlying rows. Underlying rows are result_kind rows.
+Every aggregate answer automatically includes its complete matching opportunities and supporting products, with the same filters and snapshot. When the person asks for a count or total together with its supporting list, choose the aggregate for that measure; no clarification or second query is needed for the list. Suggest further analysis rather than asking whether they want the records already included below the answer.
 columns (rows only): mode default shows the established columns; mode include adds the named fields to the defaults ("with X and Y" keeps the defaults); mode only shows exactly the named fields plus the business keys ("only X, Y, Z"). Never add currency or other fields the person did not name to an only selection; currency is reported as metadata.
 Opportunity fields (grain opportunity): {OPPORTUNITY_COLUMNS}. SKU fields (grain opportunity_sku): {SKU_COLUMNS}. Both also support stage_group.
 Default columns: {DEFAULT_COLUMNS[Grain.OPPORTUNITY]} at opportunity grain; {DEFAULT_COLUMNS[Grain.OPPORTUNITY_SKU]} at opportunity_sku grain. Never list them yourself and never list the business keys (opportunity_no, product_code): they are always included.

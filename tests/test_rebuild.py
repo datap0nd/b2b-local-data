@@ -230,7 +230,7 @@ class ViewConservationAndCurrencyTests(unittest.TestCase):
         chart = QueryExecutor().execute(views, parse_plan({'result_kind': 'aggregate', 'presentation': 'chart', 'chart_type': 'line', 'group_by': ['close_month'], 'measures': ['amount']}))
         answer = compose_answer(chart)
         self.assertRegex(answer['sentence'], r'Largest amount: [A-Z][a-z]{2} \d{4} with')
-        self.assertEqual(default_suggestions(chart), ['Show the opportunities behind that result', 'Show the same values by opportunity status', 'Show those values as a table'])
+        self.assertEqual(default_suggestions(chart), ['Show the same values by owner', 'Show the same values by opportunity status', 'Show those values as a table'])
         rows = QueryExecutor().execute(views, parse_plan({'result_kind': 'rows', 'grain': 'opportunity', 'filters': [{'field': 'stage', 'operator': 'eq', 'value': 'Won'}]}))
         self.assertEqual(default_suggestions(rows)[-1], 'Remove the stage restriction')
         total = QueryExecutor().execute(views, parse_plan({'result_kind': 'aggregate', 'presentation': 'cards', 'measures': ['amount']}))
