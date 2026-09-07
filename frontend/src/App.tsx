@@ -30,6 +30,7 @@ export function App() {
   const [expandedId, setExpandedId] = useState<number | string | null>(null);
   const [devOpen, setDevOpen] = useState(false);
   const scrollBefore = useRef(0);
+  const collapsedBefore = useRef(false);
   const counter = useRef(0);
 
   useEffect(() => { const onResize = () => setNarrow(window.innerWidth < 900); window.addEventListener('resize', onResize); return () => window.removeEventListener('resize', onResize); }, []);
@@ -145,8 +146,9 @@ export function App() {
   }, [sessionId, busy, refreshSessions]);
 
   const expanded = useMemo(() => turns.find(t => t.id === expandedId), [turns, expandedId]);
-  const openExpanded = (turn: ConversationTurn) => { scrollBefore.current = document.querySelector('[data-testid="conversation"]')?.scrollTop ?? 0; setExpandedId(turn.id); if (!narrow) setCollapsed(true); };
-  const closeExpanded = useCallback(() => { setExpandedId(null); requestAnimationFrame(() => { const el = document.querySelector('[data-testid="conversation"]'); if (el) el.scrollTop = scrollBefore.current; }); }, []);
+  const openExpanded = useCallback((turn: ConversationTurn) => { scrollBefore.current = document.querySelector('[data-testid="conversation"]')?.scrollTop ?? 0; collapsedBefore.current = collapsed; setExpandedId(turn.id); if (!narrow) setCollapsed(true); }, [collapsed, narrow]);
+  const onSuggestion = useCallback((text: string) => setDraft(text), []);
+  const closeExpanded = useCallback(() => { setExpandedId(null); setCollapsed(collapsedBefore.current); requestAnimationFrame(() => { const el = document.querySelector('[data-testid="conversation"]'); if (el) el.scrollTop = scrollBefore.current; }); }, []);
 
   if (fatal) return <div className="grid min-h-screen place-items-center p-6 text-sm text-danger" role="alert">{fatal}</div>;
   if (!boot) return <div className="grid min-h-screen place-items-center text-sm text-ink-3">Loading</div>;
@@ -180,12 +182,12 @@ export function App() {
         )}
         {expanded && expanded.assistant.status === 'answer' ? (
           <ExpandedAnalysis answer={expanded.assistant.answer} shown={expanded.assistant.shown} view={expanded.assistant.view} presentation={expanded.assistant.presentation} loading={expanded.assistant.loading} notice={expanded.assistant.notice}
-            onView={v => onView(expanded, v)} onPresentation={p => onPresentation(expanded, p)} onExplore={() => {}} onSuggestion={text => { setDraft(text); }} onClose={closeExpanded}>
+            onView={v => onView(expanded, v)} onPresentation={p => onPresentation(expanded, p)} onExplore={() => {}} onSuggestion={onSuggestion} onClose={closeExpanded}>
             <Composer compact busy={busy} draft={draft} onDraftChange={setDraft} onSubmit={async text => { await ask(text); closeExpanded(); }} placeholder="Ask a follow-up" />
           </ExpandedAnalysis>
         ) : (
           <>
-            <Conversation key={sessionId ?? "none"} turns={turns} empty={turns.length === 0} samples={samples} onView={onView} onPresentation={onPresentation} onExplore={openExpanded} onSuggestion={text => setDraft(text)} onRunWithCurrent={onRunWithCurrent} />
+            <Conversation key={sessionId ?? "none"} turns={turns} empty={turns.length === 0} samples={samples} onView={onView} onPresentation={onPresentation} onExplore={openExpanded} onSuggestion={onSuggestion} onRunWithCurrent={onRunWithCurrent} />
             <div className="border-t border-line bg-canvas px-4 pb-4 pt-3 md:px-6">
               <Composer busy={busy} draft={draft} onDraftChange={setDraft} onSubmit={ask} autoFocus />
             </div>

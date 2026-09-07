@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {memo, useEffect, useRef, useState} from 'react';
 import {ArrowDown, RotateCcw} from 'lucide-react';
 import {Button} from './ui/button';
 import {ResultCard} from './ResultCard';
@@ -14,6 +14,48 @@ interface Props {
   samples?: React.ReactNode;
   empty: boolean;
 }
+
+interface TurnProps { turn: ConversationTurn; onView: Props['onView']; onPresentation: Props['onPresentation']; onExplore: Props['onExplore']; onSuggestion: Props['onSuggestion']; onRunWithCurrent: Props['onRunWithCurrent'] }
+
+/** One question with its answer. Memoized so a view or presentation change in one turn does not re-render the others
+ *  (their tables and charts), which keeps result controls responsive in long conversations. */
+const Turn = memo(function Turn({turn, onView, onPresentation, onExplore, onSuggestion, onRunWithCurrent}: TurnProps) {
+  return (
+    <article key={turn.id} className="flex flex-col gap-3" data-testid="turn">
+      <div className="flex justify-end"><p className="max-w-[780px] whitespace-pre-wrap rounded-2xl bg-surface px-4 py-2.5 text-[15px]" data-testid="user-turn">{turn.question}</p></div>
+      <div className="max-w-full" data-testid="assistant-turn" data-status={turn.assistant.status}>
+        {turn.assistant.status === 'pending' && (
+          <div className="flex items-center gap-2 text-sm text-ink-2" role="status" aria-live="polite">
+            <span className="inline-flex gap-1" aria-hidden="true"><i className="size-1.5 animate-pulse rounded-full bg-ink-3" /><i className="size-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:150ms]" /><i className="size-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:300ms]" /></span>
+            Working on it
+          </div>
+        )}
+        {turn.assistant.status === 'error' && (
+          <div className="max-w-[780px] rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+            <p>{turn.assistant.message}</p>
+            <Button variant="outline" size="sm" className="mt-2" onClick={turn.assistant.retry}><RotateCcw />Retry</Button>
+          </div>
+        )}
+        {turn.assistant.status === 'clarify' && (
+          <div className="max-w-[780px]">
+            <p className="whitespace-pre-wrap text-[15px]">{turn.assistant.text}</p>
+            {turn.assistant.suggestions.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{turn.assistant.suggestions.map(s => <button key={s} type="button" onClick={() => onSuggestion(s)} className="rounded-full border border-line px-3 py-1 text-[13px] text-ink-2 hover:bg-surface hover:text-ink">{s}</button>)}</div>}
+          </div>
+        )}
+        {turn.assistant.status === 'missing' && (
+          <div className="max-w-[780px] rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-2">
+            <p>{turn.assistant.message}</p>
+            {turn.assistant.canRerun && <Button variant="outline" size="sm" className="mt-2" onClick={() => onRunWithCurrent(turn)}>Run with current data</Button>}
+          </div>
+        )}
+        {turn.assistant.status === 'answer' && (
+          <ResultCard answer={turn.assistant.answer} shown={turn.assistant.shown} view={turn.assistant.view} presentation={turn.assistant.presentation} loading={turn.assistant.loading} notice={turn.assistant.notice}
+            onView={v => onView(turn, v)} onPresentation={p => onPresentation(turn, p)} onExplore={() => onExplore(turn)} onSuggestion={onSuggestion} />
+        )}
+      </div>
+    </article>
+  );
+});
 
 /** Real user and assistant turns. New answers scroll into view only while the reader follows the latest turn;
  *  otherwise a "New answer" control appears and the reading position is kept. */
@@ -67,41 +109,7 @@ export function Conversation({turns, onView, onPresentation, onExplore, onSugges
               {samples && <div className="mt-6">{samples}</div>}
             </div>
           )}
-          {turns.map(turn => (
-            <article key={turn.id} className="flex flex-col gap-3" data-testid="turn">
-              <div className="flex justify-end"><p className="max-w-[780px] whitespace-pre-wrap rounded-2xl bg-surface px-4 py-2.5 text-[15px]" data-testid="user-turn">{turn.question}</p></div>
-              <div className="max-w-full" data-testid="assistant-turn" data-status={turn.assistant.status}>
-                {turn.assistant.status === 'pending' && (
-                  <div className="flex items-center gap-2 text-sm text-ink-2" role="status" aria-live="polite">
-                    <span className="inline-flex gap-1" aria-hidden="true"><i className="size-1.5 animate-pulse rounded-full bg-ink-3" /><i className="size-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:150ms]" /><i className="size-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:300ms]" /></span>
-                    Working on it
-                  </div>
-                )}
-                {turn.assistant.status === 'error' && (
-                  <div className="max-w-[780px] rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
-                    <p>{turn.assistant.message}</p>
-                    <Button variant="outline" size="sm" className="mt-2" onClick={turn.assistant.retry}><RotateCcw />Retry</Button>
-                  </div>
-                )}
-                {turn.assistant.status === 'clarify' && (
-                  <div className="max-w-[780px]">
-                    <p className="whitespace-pre-wrap text-[15px]">{turn.assistant.text}</p>
-                    {turn.assistant.suggestions.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{turn.assistant.suggestions.map(s => <button key={s} type="button" onClick={() => onSuggestion(s)} className="rounded-full border border-line px-3 py-1 text-[13px] text-ink-2 hover:bg-surface hover:text-ink">{s}</button>)}</div>}
-                  </div>
-                )}
-                {turn.assistant.status === 'missing' && (
-                  <div className="max-w-[780px] rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-2">
-                    <p>{turn.assistant.message}</p>
-                    {turn.assistant.canRerun && <Button variant="outline" size="sm" className="mt-2" onClick={() => onRunWithCurrent(turn)}>Run with current data</Button>}
-                  </div>
-                )}
-                {turn.assistant.status === 'answer' && (
-                  <ResultCard answer={turn.assistant.answer} shown={turn.assistant.shown} view={turn.assistant.view} presentation={turn.assistant.presentation} loading={turn.assistant.loading} notice={turn.assistant.notice}
-                    onView={v => onView(turn, v)} onPresentation={p => onPresentation(turn, p)} onExplore={() => onExplore(turn)} onSuggestion={onSuggestion} />
-                )}
-              </div>
-            </article>
-          ))}
+          {turns.map(turn => <Turn key={turn.id} turn={turn} onView={onView} onPresentation={onPresentation} onExplore={onExplore} onSuggestion={onSuggestion} onRunWithCurrent={onRunWithCurrent} />)}
         </div>
       </div>
       {unseen && !following && (

@@ -87,7 +87,12 @@ export function ResultChart({table, measure, onMeasure, height = 320, id}: Props
 
   function exportImage(type: 'png' | 'svg') {
     const chart = chartRef.current; if (!chart) return;
-    if (type === 'svg') { download('chart.svg', chart.getDataURL({type: 'svg'}).replace(/^data:image\/svg\+xml;charset=UTF-8,/, decodeURIComponent).length ? decodeURIComponent(chart.getDataURL({type: 'svg'}).split(',')[1]) : '', 'image/svg+xml'); return; }
+    if (type === 'svg') {
+      // The SVG renderer's data URL is "data:image/svg+xml;charset=UTF-8,<url-encoded markup>": the vector chart as drawn.
+      const encoded = chart.getDataURL({type: 'svg'}).split(',').slice(1).join(',');
+      download('chart.svg', decodeURIComponent(encoded), 'image/svg+xml');
+      return;
+    }
     const box = document.createElement('div'); box.style.cssText = `position:fixed;left:-10000px;top:0;width:${host.current?.clientWidth ?? 900}px;height:${rowHeight}px;`; document.body.append(box);
     const raster = echarts.init(box, undefined, {renderer: 'canvas', devicePixelRatio: 2}); raster.setOption({...option, backgroundColor: '#ffffff', animation: false});
     const url = raster.getDataURL({type: 'png', pixelRatio: 2, backgroundColor: '#ffffff'}); raster.dispose(); box.remove();

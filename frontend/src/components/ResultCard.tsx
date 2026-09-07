@@ -122,7 +122,7 @@ export function ResultCard({answer, shown, view, presentation, loading, notice, 
         </span>
       </div>
 
-      <div className="px-5 pb-4">
+      <div className="relative px-5 pb-4">
         {showCards ? (
           <dl className="grid gap-3 sm:grid-cols-3" data-testid="value-cards">
             {table.columns.map(c => <div key={c} className="rounded-lg border border-line px-4 py-3"><dt className="text-xs font-medium uppercase tracking-wide text-ink-3">{MEASURE_LABELS[c] ?? label(c)}</dt><dd className="mt-0.5 text-[32px] font-semibold tabular">{formatNumber(table.rows[0]?.[c] ?? null, c === 'amount' || c === 'deal_size' ? 2 : null)}</dd></div>)}
@@ -131,7 +131,8 @@ export function ResultCard({answer, shown, view, presentation, loading, notice, 
           <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-ink-3" data-testid="empty">No rows match this question.</p>
         ) : (
           <>
-            {showChart && <div className="mb-4"><ResultChart table={table} measure={measureKey} onMeasure={setMeasure} /></div>}
+            {/* The chart stays mounted at full width while Data is shown (invisible, out of flow), so Chart/Data is a paint change, not an ECharts re-layout. */}
+            {canChart && <div className={cn('mb-4', !showChart && 'invisible absolute inset-x-5 top-0 h-0 overflow-hidden')} aria-hidden={!showChart}><ResultChart table={table} measure={measureKey} onMeasure={setMeasure} /></div>}
             {!expanded && <ResultTable table={table} mode="preview" onDetails={setDetails} key={table.view + presentation + table.result_digest} />}
             {!expanded && table.rows.length > PREVIEW_ROWS && <p className="mt-2 text-xs text-ink-3">Showing {PREVIEW_ROWS} of {table.rows.length.toLocaleString()} returned rows{table.truncated ? ` (${table.total_rows.toLocaleString()} match in total)` : ''}. Sorting and export apply to the returned rows.</p>}
           </>
