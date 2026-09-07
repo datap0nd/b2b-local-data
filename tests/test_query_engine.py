@@ -94,7 +94,7 @@ class QueryEngineTests(unittest.TestCase):
         self.assertEqual(len(clarification_text('x'*400)),300)
     def test_malicious_text_stays_literal(self):
         self.assertEqual(self.execute(filters=[{'field':'opportunity_name','operator':'eq','value':"__import__('os').system('anything')"}])['total_rows'],0)
-        for payload in [{'sql':'DROP TABLE x'},{'version':2},{'limit':True},{'filters':[{'field':'stage','operator':'in','value':[]}]},{'filters':[{'field':'stage','operator':'between','value':['Won']}]},{'intent':'clarify'}]:
+        for payload in [{'sql':'DROP TABLE x'},{'version':3},{'limit':True},{'filters':[{'field':'stage','operator':'in','value':[]}]},{'filters':[{'field':'stage','operator':'between','value':['Won']}]},{'intent':'clarify'}]:
             with self.subTest(payload=payload),self.assertRaises(AppError):parse_plan(payload)
 
     def test_unknown_fields_and_invalid_types_rejected(self):

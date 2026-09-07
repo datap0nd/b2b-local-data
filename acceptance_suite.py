@@ -10,7 +10,7 @@ import re
 
 from reference_evaluator import STAGE_MEMBERS, r_number
 
-SUITE_VERSION = '1.1.0'
+SUITE_VERSION = '2.0.0'
 CURRENCY_FIELDS = ('opp_amount_converted_currency', 'amount_converted_currency')
 PRODUCT_FIELDS = {'product_code', 'pet_name', 'gscm_product_group_new', 'amount_converted_currency', 'sku_amount', 'exported_opp_amount_value_count'}
 # Contract default columns, copied from the published query contract.
@@ -27,8 +27,10 @@ def step(id, title, prompt, expect, view='auto', conversation=None, witnesses=()
             'witnesses': list(witnesses), 'browser_checks': list(browser), 'needs': list(needs), 'behavior': behavior}
 
 
-def table(grain='opportunity', filters=(), columns=None, sort=None, limit=None):
-    return {'intent': 'table', 'grain': grain, 'filters': list(filters), 'columns': columns, 'sort': sort, 'limit': limit}
+def table(grain='opportunity', filters=(), columns=None, sort=None, limit=None, include=None):
+    """A row result. columns=None expects the default columns; columns=[...] an exact 'only' selection (plus keys);
+    include=[...] the defaults plus those fields (an additive request such as "with their deal size")."""
+    return {'intent': 'table', 'grain': grain, 'filters': list(filters), 'columns': columns, 'include': list(include) if include else None, 'sort': sort, 'limit': limit}
 
 
 def metric(grain='any', filters=(), group=(), measures=(), intent='metric', chart_type=None, sort=None):
@@ -132,6 +134,35 @@ STEPS = [
     step('C4', 'Ambiguous product scope', 'And what is the value of product {product} there?', CLARIFY, conversation='C', witnesses=('product',), behavior='Product scope is ambiguous; a clarification is expected.'),
     step('C5', 'Clarify: only product rows', "Only count that product's own rows, not the whole opportunities.", metric('sku', filters=[F('currency', 'eq', '{currency}'), F('product_code', 'eq', '{product}')], measures=['amount']), conversation='C', behavior='SKU grain amount for the product within the currency.'),
     step('C6', 'Remove the product restriction', 'Remove the product restriction.', metric(filters=[F('currency', 'eq', '{currency}')], measures=['amount']), conversation='C', behavior='Total amount for the currency again.'),
+    # Auto-mode versions of the grain-sensitive cases: the model must choose the grain from the wording alone.
+    step('T03a', 'Auto: selected opportunity columns', 'Show a table with only the opportunity number, opportunity owner, stage, close date, quantity, and amount. Limit it to 20 rows.',
+         table(columns=['opportunity_owner', 'stage', 'close_date', 'quantity', 'opportunity_amount'], limit=20), view='auto', needs=('twenty_plus',),
+         behavior='Auto mode: opportunity grain from the wording; exactly the selected columns plus the key, 20 rows.'),
+    step('T04a', 'Auto: selected product columns', 'Show a table with only the opportunity number, product code, product name, quantity, and amount. Limit it to 20 rows.',
+         table('sku', columns=['pet_name', 'quantity', 'sku_amount'], limit=20), view='auto', needs=('twenty_plus',),
+         behavior='Auto mode: product fields imply opportunity/SKU grain; exactly the selected columns plus both keys, no currency column.'),
+    step('T21a', 'Auto: whole opportunities containing a product', 'Show the complete opportunities containing product {product}, including the value of all their products.',
+         table(filters=[F('product_code', 'eq', '{product}')]), view='auto', witnesses=('product',), behavior='Auto mode: opportunity grain; product filter selects whole opportunities.'),
+    step('T22a', 'Auto: only matching product rows', 'Show only the rows for product {product}, with their quantity and amount.', table('sku', filters=[F('product_code', 'eq', '{product}')]), view='auto', witnesses=('product',),
+         behavior='Auto mode: opportunity/SKU grain; "with their quantity and amount" keeps the default columns.'),
+    step('T31a', 'Auto: rows with quality warnings', 'Show the opportunity and product rows that carry a data-quality warning.', table('sku', filters=[F('has_quality_warning', 'eq', True)]), view='auto', needs=('quality_warning',),
+         behavior='Auto mode: "opportunity and product rows" means opportunity/SKU grain.'),
+    # Column-selection paraphrases and negative controls.
+    step('T37', 'Additive columns', 'Show the opportunities with their deal size.', table(include=['deal_size_on_pricing_date_usd']), view='summary',
+         behavior='"With their deal size" keeps the default columns and adds deal_size_on_pricing_date_usd.'),
+    step('T38', 'Exact projection paraphrase', 'List just the opportunity number, end customer, and amount for every opportunity.', table(columns=['end_customer', 'opportunity_amount']), view='summary',
+         behavior='"Just" is an exact selection: customer and amount plus the key, nothing else.'),
+    step('T39', 'Additive negative control', 'Show the opportunities including the first channel and the age.', table(include=['first_channel', 'age']), view='summary',
+         behavior='"Including" is additive: defaults plus first_channel and age, not an exclusive projection.'),
+    # Conversation D: presentation-only changes versus underlying rows.
+    step('D1', 'Quantity by stage group chart', 'Chart the total quantity by stage group as a bar chart.', chart('bar', group=['stage_group'], measures=['quantity']), conversation='D', behavior='Bar chart of quantity by stage group.'),
+    step('D2', 'Same values as a table', 'Show the same values as a table.', metric(group=['stage_group'], measures=['quantity']), conversation='D', behavior='Presentation only: the grouped values as a table, grouping and measure unchanged.'),
+    step('D3', 'Opportunities behind the values', 'Show the opportunities behind those values.', table(), view='auto', conversation='D', behavior='Underlying rows: every opportunity of the same (unrestricted) population at opportunity grain.'),
+    # Conversation E: removing one filter keeps the unrelated ones; a fresh question clears the scope.
+    step('E1', 'Open, typed, closing in 2026', "Show the Open opportunities of type '{type}' with a close date in 2026.", table(filters=[F('stage', 'group', 'Open'), F('type', 'eq', '{type}'), F('close_date', 'year', 2026)]), view='summary', conversation='E', witnesses=('type',), needs=('close_date_2026',)),
+    step('E2', 'Remove the type restriction', 'Remove the type restriction.', table(filters=[F('stage', 'group', 'Open'), F('close_date', 'year', 2026)]), conversation='E', behavior='The stage and close-date filters stay.'),
+    step('E3', 'Add an owner', 'Now only the ones owned by {owner_a}.', table(filters=[F('stage', 'group', 'Open'), F('close_date', 'year', 2026), F('opportunity_owner', 'eq', '{owner_a}')]), conversation='E', witnesses=('owner_a',), behavior='Stage and date filters are retained; the owner filter is added.'),
+    step('E4', 'Start over', 'Start over: show every opportunity.', table(), view='summary', conversation='E', behavior='A new unrestricted question clears the previous scope.'),
 ]
 STEP_INDEX = {s['id']: i for i, s in enumerate(STEPS)}
 
@@ -483,6 +514,32 @@ def column_name(name, grain):
     return name
 
 
+def plan_intent(plan):
+    """The version-1 intent of a version-2 plan dictionary (rows -> table, aggregate -> metric or chart)."""
+    kind = plan.get('result_kind')
+    if kind is None:
+        return plan.get('intent')
+    if kind == 'clarify':
+        return 'clarify'
+    if kind == 'rows':
+        return 'table'
+    return 'chart' if plan.get('presentation') == 'chart' else 'metric'
+
+
+def plan_columns(plan):
+    columns = plan.get('columns')
+    if isinstance(columns, dict):
+        return columns.get('mode', 'default'), list(columns.get('fields') or [])
+    dimensions = plan.get('dimensions') or []
+    return ('only' if dimensions else 'default'), list(dimensions)
+
+
+def plan_group_by(plan):
+    if 'group_by' in plan:
+        return list(plan.get('group_by') or [])
+    return list(plan.get('dimensions') or [])
+
+
 def match_plan(outcome, step, witnesses):
     """Compare the effective plan with the authored expectation. Returns (ok, problems, variant)."""
     expect = step['expect']
@@ -495,29 +552,45 @@ def match_plan(outcome, step, witnesses):
     plan = outcome['plan']
     problems = []
     grain = 'opportunity' if plan['grain'] == 'opportunity' else 'sku'
+    intent = plan_intent(plan)
     if expect['grain'] != 'any' and grain != expect['grain']:
         problems.append(f"grain {plan['grain']} instead of {expect['grain']}")
-    if plan['intent'] != expect['intent']:
-        problems.append(f"intent {plan['intent']} instead of {expect['intent']}")
+    if intent != expect['intent']:
+        problems.append(f"intent {intent} instead of {expect['intent']}" + (f" (result_kind {plan.get('result_kind')}, presentation {plan.get('presentation')})" if plan.get('result_kind') else ''))
     filter_problems, variant = match_filters(expect['filters'], plan['filters'], witnesses)
     problems.extend(filter_problems)
     variant['grain'] = grain
     if expect['intent'] == 'table':
         keys = {'opportunity_no'} if grain == 'opportunity' else {'opportunity_no', 'product_code'}
-        chosen = [column_name(d, grain) for d in plan['dimensions']] + [column_name(m, grain) for m in plan['measures'] if m in ('amount', 'quantity')]
+        defaults = SUMMARY_DEFAULT if grain == 'opportunity' else DETAIL_DEFAULT
+        mode, fields = plan_columns(plan)
+        table_measures = [column_name(m, grain) for m in plan['measures'] if m in ('amount', 'quantity')]
         extra_measures = [m for m in plan['measures'] if m not in ('amount', 'quantity')]
         if extra_measures:
             problems.append('unexpected table measures ' + ', '.join(extra_measures))
-        if expect['columns'] is None:
-            if plan['dimensions'] or plan['measures']:
-                problems.append('default columns were expected but columns were selected: ' + ', '.join(plan['dimensions'] + plan['measures']))
-            variant['columns'] = SUMMARY_DEFAULT if grain == 'opportunity' else DETAIL_DEFAULT
+        named = [column_name(f, grain) for f in fields]
+        if expect['columns'] is None and not expect.get('include'):
+            extra = [f for f in named + table_measures if f not in defaults and f not in keys]
+            if mode == 'only':
+                problems.append('default columns were expected but an exact selection was made: ' + ', '.join(fields + plan['measures']))
+            elif extra:
+                problems.append('default columns were expected but extra columns were included: ' + ', '.join(extra))
+            variant['columns'] = list(defaults)
+        elif expect.get('include'):
+            wanted = {column_name(c, grain) for c in expect['include']}
+            if mode == 'only':
+                problems.append('an additive request ("with"/"including") was answered with an exact selection: ' + ', '.join(fields))
+            elif mode == 'default' or not wanted <= set(named + table_measures):
+                problems.append(f"included columns {sorted(set(named + table_measures) - set(defaults))} instead of {sorted(wanted)}")
+            variant['columns'] = list(defaults) + [f for f in fields + [m for m in plan['measures'] if m in ('amount', 'quantity')] if column_name(f, grain) not in defaults]
         else:
             expected_set = {column_name(c, grain) for c in expect['columns']} - keys
-            if set(chosen) - keys != expected_set:
-                problems.append(f"columns {sorted(set(chosen) - keys)} instead of {sorted(expected_set)}")
+            if mode != 'only':
+                problems.append(f"an exact selection ('only') was expected but columns mode was {mode}")
+            if set(named + table_measures) - keys != expected_set:
+                problems.append(f"columns {sorted(set(named + table_measures) - keys)} instead of {sorted(expected_set)}")
             # Keep the plan's own spelling of an equivalent amount column so cells compare by name.
-            variant['columns'] = [d for d in plan['dimensions']] + [m for m in plan['measures'] if m in ('amount', 'quantity')]
+            variant['columns'] = list(fields) + [m for m in plan['measures'] if m in ('amount', 'quantity')]
         if expect['sort'] is not None:
             wanted = [(column_name(f, grain), asc) for f, asc in expect['sort']]
             actual = [(column_name(s['field'], grain), s['direction'] == 'asc') for s in plan['sort']]
@@ -536,7 +609,9 @@ def match_plan(outcome, step, witnesses):
         variant['limit'] = plan['limit']
     else:
         expected_group = [('currency', CURRENCY_FIELDS) if g == 'currency' else (g, (g,)) for g in expect['group']]
-        dims = list(plan['dimensions'])
+        dims = plan_group_by(plan)
+        if plan.get('result_kind') == 'aggregate' and expect['intent'] == 'metric' and plan.get('presentation') not in ('table', 'cards'):
+            problems.append(f"presentation {plan.get('presentation')} instead of table or cards")
         resolved = []
         for name, accepted in expected_group:
             found = next((d for d in dims if d in accepted), None)

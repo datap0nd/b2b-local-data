@@ -40,7 +40,7 @@ class GatewayTests(unittest.TestCase):
         repo,connection=self.repository()
         connection.execute.return_value.fetchall.side_effect=[[(name,) for name in SQL_COLUMNS.values()],[]]
         views=repo.load()
-        select=self.statements(connection)[-1]
+        select=next(s for s in self.statements(connection) if 'LIMIT :cap' in s)
         self.assertIn('CAST("1st_channel" AS text) AS "first_channel"',select);self.assertIn('CAST("deal_size_on_pricing_date_usd" AS text) AS "deal_size_on_pricing_date_usd"',select)
         self.assertIn('FROM "bi_reporting"."b2b_project" LIMIT :cap',select);self.assertEqual(select.count('CAST('),30);self.assertEqual(select.count(') AS "'),30)
         self.assertTrue(views.opportunity.empty)

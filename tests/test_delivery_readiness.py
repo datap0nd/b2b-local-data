@@ -137,8 +137,8 @@ class PlanningTests(unittest.TestCase):
         settings = Settings(Path('.'), {'LLM_MODEL_NAME': 'qwen-test', 'LLM_API_URL': 'http://127.0.0.1:4002/v1/chat/completions'}, rules='- rule one')
         client = PlannerClient(settings)
         prompt = client.system_prompt(None, 'auto', date(2026, 9, 7))
-        for phrase in ('Default tables', 'omit dimensions for a default table', 'never list them either', 'exactly those columns', 'even if every record already uses that currency',
-                       'Today: 2026-09-07', 'Never suggest averages', 'ambiguous between whole opportunities', 'do not carry over', 'at most 10'):
+        for phrase in ('Default columns', 'mode only', 'mode include', 'never means the underlying rows', 'even if every record already uses that currency',
+                       'Today: 2026-09-07', 'Never suggest averages', 'ambiguous between these two', 'do not carry over', 'presentation change alone', 'contract version 2'):
             self.assertIn(phrase, prompt)
         self.assertNotIn('4002', prompt)
         digest = client.prompt_digest(date(2026, 9, 7))
@@ -337,7 +337,7 @@ class RunnerAccountingTests(unittest.TestCase):
         status = runner.status('alice', run_id)
         self.assertTrue(status['full_pass']); self.assertTrue(status['qualified']); self.assertEqual(status['unqualified_reasons'], [])
         counts = status['counts']
-        self.assertTrue(counts['accounted']); self.assertEqual(counts['by_state']['pass'], 54); self.assertEqual(counts['browser_passed'], len(BROWSER_CHECKS)); self.assertEqual(len(BROWSER_CHECKS), 16)
+        self.assertTrue(counts['accounted']); self.assertEqual(counts['by_state']['pass'], len(STEPS)); self.assertEqual(counts['browser_passed'], len(BROWSER_CHECKS)); self.assertEqual(len(BROWSER_CHECKS), 16)
         identity = status['run']['identity']
         self.assertEqual((identity['suite_version'], identity['evaluator_version'], identity['digest_version']), (SUITE_VERSION, 'reference-2', 'digest2'))
         self.assertEqual(identity['prompt_digest'], 'sha256:scripted-planner'); self.assertIn('stream', identity['model_config']); self.assertEqual(status['run']['report_version'], REPORT_VERSION)
@@ -347,8 +347,8 @@ class RunnerAccountingTests(unittest.TestCase):
         report = runner.report('alice', run_id)
         for heading in ('### Step status accounting', '### Canonical parity diagnostics', '## Release decision', '### Coverage limitations', 'Fingerprint field order', 'digest2', 'Planner prompt digest', 'Subsidiary Code'):
             self.assertIn(heading, report)
-        self.assertIn('| total accounted | 54 of 54 |', report); self.assertIn('This run is **qualified**', report)
-        self.assertEqual(manifest()['suite_version'], '1.1.0'); self.assertEqual(len(manifest()['browser_checks']), 16)
+        self.assertIn(f'| total accounted | {len(STEPS)} of {len(STEPS)} |', report); self.assertIn('This run is **qualified**', report)
+        self.assertEqual(manifest()['suite_version'], '2.0.0'); self.assertEqual(len(manifest()['browser_checks']), 16)
 
     def test_recovered_steps_are_distinguished_and_double_rejection_errors(self):
         runner, planner = self.runner(rejections={'T01': ['{"intent":"dance"}'], 'T02': ['{"intent":"dance"}', '{"limit":"ten"}']})
@@ -413,7 +413,7 @@ class RunnerAccountingTests(unittest.TestCase):
         status = runner.status('alice', replay)
         self.assertEqual(status['run']['scope'], 'replay of ' + first); self.assertEqual(status['run']['identity']['source_fingerprint'], runner.status('alice', first)['run']['identity']['source_fingerprint'])
         self.assertTrue(status['complete']); self.assertFalse(status['full_pass']); self.assertTrue(any('replay' in r for r in status['unqualified_reasons']))
-        self.assertEqual(status['counts']['by_state']['pass'], 54)
+        self.assertEqual(status['counts']['by_state']['pass'], len(STEPS))
         self.assertEqual(runner.qualification('alice')['streak'], 1)
         with self.assertRaises(AppError): runner.start('alice', replay_from='0' * 32)
 

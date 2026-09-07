@@ -1,0 +1,42 @@
+{
+  "name": "b2b-frontend",
+  "private": true,
+  "version": "0.6.0",
+  "type": "module",
+  "description": "Conversational analysis frontend for B2B Local Data. Built assets are committed to ../web/dist with a source fingerprint; end users never need Node.",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build && node scripts/fingerprint.mjs write",
+    "verify": "node scripts/fingerprint.mjs check",
+    "test": "vitest run",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource/inter": "5.3.0",
+    "@radix-ui/react-dialog": "1.1.23",
+    "@radix-ui/react-dropdown-menu": "2.1.24",
+    "@radix-ui/react-tooltip": "1.2.16",
+    "@tanstack/react-table": "9.2.4",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "echarts": "6.1.0",
+    "lucide-react": "1.42.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwind-merge": "3.6.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@testing-library/react": "16.3.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.1",
+    "jsdom": "30.0.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "8.2.2",
+    "vitest": "5.0.0"
+  }
+}

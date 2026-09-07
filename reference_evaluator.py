@@ -428,6 +428,64 @@ def evaluate(source, spec):
             'digest': digest_rows(ordered, columns), 'limit': limit, 'kinds': {c: column_kind(c) for c in columns}}
 
 
+def summarize_matching_products(source, sku_rows):
+    """Reference Summary view of a product-filtered detail result: one opportunity row per opportunity present in the
+    matching SKU rows, with quantity, amount, product count, and product lists covering those rows only. Opportunity
+    attributes come from the reference opportunity grain."""
+    grouped = {}
+    for row in sku_rows:
+        grouped.setdefault(row['opportunity_no'], []).append(row)
+    result = []
+    for opp in sorted(grouped):
+        parent = source.opportunity_index.get(opp)
+        if parent is None:
+            continue
+        members = grouped[opp]
+        row = dict(parent)
+        row['quantity'] = r_sum([m['quantity'] for m in members])
+        row['opportunity_amount'] = r_sum([m['sku_amount'] for m in members])
+        row['sku_count'] = len(members)
+        row['source_row_count'] = sum(m['source_row_count'] for m in members)
+        row['product_codes'] = ', '.join(sorted(set(known([m['product_code'] for m in members])))) or None
+        row['product_names'] = ', '.join(sorted(set(known([m['pet_name'] for m in members])))) or None
+        row['has_quality_warning'] = bool(any(m['has_quality_warning'] for m in members) or parent['has_quality_warning'])
+        result.append(row)
+    return result
+
+
+def evaluate_view(source, spec, view):
+    """Expected rows of the Summary or Detailed view of a row specification, from the same matching population.
+
+    A detail specification with product filters summarizes only its matching products; an opportunity specification
+    details every product of its matching opportunities."""
+    if spec['intent'] != 'table':
+        raise ValueError('views apply to row results')
+    target = 'opportunity' if view == 'summary' else 'sku'
+    if target == spec['grain']:
+        return evaluate(source, spec)
+    matching = apply_filters(source, spec['grain'], spec.get('filters', []))
+    if target == 'sku':
+        keep = {row['opportunity_no'] for row in matching}
+        rows = [row for row in source.sku if row['opportunity_no'] in keep]
+        columns = list(spec.get('view_columns') or ['product_code', 'pet_name', 'end_customer', 'opportunity_owner', 'stage', 'quantity', 'sku_amount', 'amount_converted_currency', 'has_quality_warning'])
+        keys = ['opportunity_no', 'product_code']
+    else:
+        rows = summarize_matching_products(source, matching)
+        columns = list(spec.get('view_columns') or ['opportunity_name', 'end_customer', 'opportunity_owner', 'stage', 'close_date', 'product_codes', 'product_names', 'quantity', 'opportunity_amount', 'sku_count', 'opp_amount_converted_currency', 'has_amount_discrepancy', 'has_quality_warning'])
+        keys = ['opportunity_no']
+    for key in reversed(keys):
+        if key not in columns:
+            columns.insert(0, key)
+    getter = lambda row, field: value_of(row, field, target, source)
+    ordered = sort_rows(rows, [(k, True) for k in keys], getter)
+    complete = [{c: getter(row, c) for c in columns} for row in ordered]
+    limit = spec.get('limit') or 1000
+    totals = {'amount': r_sum([getter(r, 'amount') for r in ordered]), 'quantity': r_sum([r['quantity'] for r in ordered]),
+              'opportunity_count': distinct_count([r['opportunity_no'] for r in ordered]), 'rows': len(ordered)}
+    return {'columns': columns, 'keys': keys, 'rows': complete[:limit], 'total': len(ordered), 'totals': totals,
+            'digest': digest_rows(complete, columns), 'limit': limit, 'kinds': {c: column_kind(c) for c in columns}}
+
+
 def compare(expected, actual, max_differences=20):
     """Compare a production result payload with the reference result: typed cells, keyed rows, order, counts, totals, digest."""
     differences, checks = [], {}

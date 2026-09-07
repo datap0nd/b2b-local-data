@@ -58,7 +58,7 @@ def synthetic_records(seed=7,opportunities=60,years=None):
 
 
 def authored_plan(step,witnesses):
-    """The plan a perfectly behaving model would return for a step, expressed with refine follow-ups in conversations."""
+    """The version-2 plan a perfectly behaving model would return for a step, with refine follow-ups in conversations."""
     e=step['expect'];sid=step['id'];w=lambda k:witnesses[k]
     def filters(specs):
         out=[]
@@ -71,24 +71,28 @@ def authored_plan(step,witnesses):
             else: out.append({'field':f['field'],'operator':f['op'],'value':value})
         return out
     if e['intent']=='clarify':
-        return {'intent':'clarify','clarification':CLARIFICATIONS.get(sid,'Which calculation or scope do you mean?'),'suggestions':SUGGESTIONS.get(sid,[]),'context_action':'refine' if step['conversation'] else 'replace'}
+        return {'result_kind':'clarify','clarification':CLARIFICATIONS.get(sid,'Which calculation or scope do you mean?'),'suggestions':SUGGESTIONS.get(sid,[]),'context_action':'refine' if step['conversation'] else 'replace'}
     grain='opportunity_sku' if e['grain']=='sku' else 'opportunity'
-    plan={'intent':e['intent'],'grain':grain,'filters':filters(e['filters'])}
     if e['intent']=='table':
-        if e['columns']: plan['dimensions']=list(e['columns'])
+        plan={'result_kind':'rows','presentation':'table','grain':grain,'filters':filters(e['filters'])}
+        if e['columns']: plan['columns']={'mode':'only','fields':list(e['columns'])}
+        elif e.get('include'): plan['columns']={'mode':'include','fields':list(e['include'])}
         if e['sort']: plan['sort']=[{'field':f,'direction':'asc' if a else 'desc'} for f,a in e['sort']]
         if e['limit']: plan['limit']=e['limit']
     else:
-        plan['dimensions']=['opp_amount_converted_currency' if g=='currency' else g for g in e['group']];plan['measures']=list(e['measures'])
+        group=['opp_amount_converted_currency' if g=='currency' else g for g in e['group']]
+        plan={'result_kind':'aggregate','presentation':'chart' if e['intent']=='chart' else ('table' if group else 'cards'),'grain':grain,'filters':filters(e['filters']),'group_by':group,'measures':list(e['measures'])}
         if e['chart_type']: plan['chart_type']=e['chart_type']
         if e['sort']: plan['sort']=[{'field':f,'direction':'asc' if a else 'desc'} for f,a in e['sort']]
     refinements={'A2':{'context_action':'refine','filters':[{'field':'opportunity_owner','operator':'eq','value':w('owner_b')}]},
                  'A3':{'context_action':'refine','filters':[{'field':'stage','operator':'eq','value':'Won'}]},
                  'A4':{'context_action':'refine','remove_filters':['opportunity_owner']},'A5':{'context_action':'refine','grain':'opportunity_sku'},'A6':{'context_action':'refine','grain':'opportunity'},
-                 'B2':{'context_action':'refine','intent':'chart','chart_type':'bar','dimensions':['stage_group'],'measures':['amount']},'B3':{'context_action':'refine','measures':['quantity']},
-                 'B4':{'context_action':'refine','intent':'metric','chart_type':None},'B5':{'context_action':'refine','intent':'table','grain':'opportunity_sku','dimensions':[],'measures':[],'filters':[{'field':'stage','operator':'eq','value':'Won'}]},
-                 'B6':{'context_action':'replace','intent':'table','grain':'opportunity'},'C3':{'context_action':'refine','intent':'metric','measures':['amount'],'dimensions':[]},
-                 'C5':{'context_action':'refine','grain':'opportunity_sku','filters':[{'field':'product_code','operator':'eq','value':w('product')}]},'C6':{'context_action':'refine','remove_filters':['product_code']}}
+                 'B2':{'context_action':'refine','result_kind':'aggregate','presentation':'chart','chart_type':'bar','group_by':['stage_group'],'measures':['amount']},'B3':{'context_action':'refine','measures':['quantity']},
+                 'B4':{'context_action':'refine','presentation':'table'},'B5':{'context_action':'refine','result_kind':'rows','grain':'opportunity_sku','filters':[{'field':'stage','operator':'eq','value':'Won'}]},
+                 'B6':{'context_action':'replace','result_kind':'rows','grain':'opportunity'},'C3':{'context_action':'refine','result_kind':'aggregate','presentation':'cards','measures':['amount']},
+                 'C5':{'context_action':'refine','grain':'opportunity_sku','filters':[{'field':'product_code','operator':'eq','value':w('product')}]},'C6':{'context_action':'refine','remove_filters':['product_code']},
+                 'D2':{'context_action':'refine','presentation':'table'},'D3':{'context_action':'refine','result_kind':'rows','grain':'opportunity'},
+                 'E2':{'context_action':'refine','remove_filters':['type']},'E3':{'context_action':'refine','filters':[{'field':'opportunity_owner','operator':'eq','value':w('owner_a')}]},'E4':{'context_action':'replace','result_kind':'rows','grain':'opportunity'}}
     return refinements.get(sid,plan)
 
 
@@ -111,7 +115,7 @@ class ScriptedPlanner:
         if step is None: raise AssertionError('Unscripted prompt: '+question)
         if step['id'] in self.fail_on: raise RuntimeError('model unavailable')
         plan=parse_plan(self.scripted(step,view))
-        if view!='auto' and plan.intent.value!='clarify': plan.grain='opportunity' if view=='summary' else 'opportunity_sku'
+        if view!='auto' and plan.result_kind.value!='clarify': plan.grain='opportunity' if view=='summary' else 'opportunity_sku'
         return plan
     def generate(self,question,history,previous=None,view='auto',correction=None,effective_date=None):
         self.calls.append(question)
@@ -132,6 +136,6 @@ class ScriptedPlanner:
         values=self.scripted(step,view)
         outcome['content']=json.dumps(values,default=str);outcome['excerpt']=outcome['content'][:300]
         plan=parse_plan(values)
-        if view!='auto' and plan.intent.value!='clarify': plan.grain='opportunity' if view=='summary' else 'opportunity_sku'
+        if view!='auto' and plan.result_kind.value!='clarify': plan.grain='opportunity' if view=='summary' else 'opportunity_sku'
         outcome['plan']=plan
         return outcome

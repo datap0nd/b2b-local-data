@@ -87,9 +87,10 @@ class ApiTests(unittest.TestCase):
         first=self.request('/api/sessions')
         spoofed=self.request('/api/sessions',None,**{'X-Forwarded-User':'someone-else'})
         self.assertEqual(first,spoofed)
-    def test_refresh_does_not_call_qwen(self):
-        before=self.planner.plan.call_count;result=self.request('/api/refresh',{})
-        self.assertEqual(self.planner.plan.call_count,before);self.assertEqual(result['source'],'demo')
+    def test_browser_refresh_route_is_gone(self):
+        # Dataset loading is server managed; there is no ordinary refresh endpoint any more.
+        with self.assertRaises(HTTPError) as error:self.request('/api/refresh',{})
+        self.assertIn(error.exception.code,(404,405))
 
 
 class CsvModeTests(unittest.TestCase):
@@ -121,18 +122,18 @@ class CsvModeTests(unittest.TestCase):
         reply=self.request('/api/ask',{'question':'total deal size'})
         self.assertEqual(self.planner.plan.call_count,before+1)
         self.assertEqual(reply['table']['rows'],[{'deal_size':'1260.50','opportunity_count':4}])
-    def test_refresh_rereads_the_file_and_reports_errors(self):
-        result=self.request('/api/refresh',{})
-        self.assertEqual((result['source'],result['source_name'],result['opportunities'],result['skus']),('csv','salesforce.csv',4,5))
+    def test_server_managed_snapshot_rereads_the_file_and_reports_errors(self):
+        # With a zero cache the next question reads the current file; load failures are reported, never hidden.
+        self.assertEqual(self.request('/api/sample',{'view':'summary'})['table']['total_rows'],4)
         path=self.home/'exports/salesforce.csv';original=path.read_bytes()
         try:
             write_export(path,fixture_rows()[:3])
-            self.assertEqual(self.request('/api/refresh',{})['opportunities'],1)
+            self.assertEqual(self.request('/api/sample',{'view':'summary'})['table']['total_rows'],1)
             path.write_text('broken header only\n',encoding='utf-8')
-            with self.assertRaises(HTTPError) as error:self.request('/api/refresh',{})
+            with self.assertRaises(HTTPError) as error:self.request('/api/sample',{'view':'summary'})
             self.assertEqual(error.exception.code,400);self.assertIn('missing required Salesforce columns',json.load(error.exception)['error'])
         finally:path.write_bytes(original)
-        self.assertEqual(self.request('/api/refresh',{})['opportunities'],4)
+        self.assertEqual(self.request('/api/sample',{'view':'summary'})['table']['total_rows'],4)
 
 
 class PostgresModeTests(unittest.TestCase):
@@ -187,12 +188,12 @@ class AcceptanceApiTests(unittest.TestCase):
         repository=MagicMock();frame=__import__('pandas').DataFrame(cls.records,columns=__import__('data_layer').RAW_COLUMNS,dtype=object)
         repository.load_raw.side_effect=lambda:(frame.copy(),'postgres','test.b2b_project')
         repository.load.side_effect=lambda:__import__('data_layer').build_canonical_views(frame.copy())
-        cls.local=LocalServer(Settings(cls.home,{'DB_KIND':'postgres','PGURL':'db.example:5432/postgres','LLM_MODEL_NAME':'qwen-test'}),repository=repository,planner=ScriptedPlanner(witnesses))
+        cls.local=LocalServer(Settings(cls.home,{'DB_KIND':'postgres','PGURL':'db.example:5432/postgres','LLM_MODEL_NAME':'qwen-test','B2B_ENABLE_ACCEPTANCE_UI':'true'}),repository=repository,planner=ScriptedPlanner(witnesses))
     @classmethod
     def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
     def request(self,path,body=None,**headers):return self.local.request(path,body,**headers)
     def test_suite_manifest_and_full_run_over_http(self):
-        suite=self.request('/api/test/suite');self.assertEqual(len(suite['steps']),54);self.assertEqual(len(suite['browser_checks']),16);self.assertFalse(suite['qualification']['ready'])
+        suite=self.request('/api/test/suite');self.assertGreaterEqual(len(suite['steps']),54);total=len(suite['steps']);self.assertEqual(len(suite['browser_checks']),16);self.assertFalse(suite['qualification']['ready'])
         started=self.request('/api/test/runs',{});run_id=started['run']['id'];self.assertEqual(started['next_step'],0)
         with self.assertRaises(HTTPError) as error:self.request('/api/test/runs',{});self.assertEqual(error.exception.code,400)
         for body in [{'step':5},{'step':-1},{'prompt':'Show everything','step':0},{'step':0,'plan':{}}]:
@@ -201,8 +202,8 @@ class AcceptanceApiTests(unittest.TestCase):
         first=self.request(f'/api/test/runs/{run_id}/step',{'step':0})
         self.assertEqual(first['step']['status'],'pass');self.assertIn('rows',first['table']);self.assertEqual(first['table']['total_rows'],60)
         again=self.request(f'/api/test/runs/{run_id}/step',{'step':0});self.assertEqual(again['step']['seconds'],first['step']['seconds'])
-        for index in range(1,54):self.request(f'/api/test/runs/{run_id}/step',{'step':index})
-        with self.assertRaises(HTTPError):self.request(f'/api/test/runs/{run_id}/step',{'step':54})
+        for index in range(1,total):self.request(f'/api/test/runs/{run_id}/step',{'step':index})
+        with self.assertRaises(HTTPError):self.request(f'/api/test/runs/{run_id}/step',{'step':total})
         for check in range(1,17):self.request(f'/api/test/runs/{run_id}/browser',{'check':check,'status':'pass','expected':{'x':1},'observed':{'x':1},'notes':'ok'})
         status=self.request(f'/api/test/runs/{run_id}');self.assertEqual(status['run']['status'],'complete');self.assertTrue(status['full_pass']);self.assertTrue(status['comparison'] is None or 'previous_run' in status['comparison'])
         detail=self.request(f'/api/test/runs/{run_id}/steps/T25');self.assertEqual(len(detail['result']['rows']),10);self.assertTrue(detail['data']['ok'])
@@ -215,7 +216,7 @@ class AcceptanceApiTests(unittest.TestCase):
         self.assertEqual(self.request('/api/status')['qualification']['streak'],1)
         with self.assertRaises(HTTPError) as error:self.request('/api/test/runs/'+'0'*32)
         self.assertEqual(error.exception.code,400)
-        with self.assertRaises(HTTPError):self.request(f'/api/test/runs/{run_id}/step',{'step':54})
+        with self.assertRaises(HTTPError):self.request(f'/api/test/runs/{run_id}/step',{'step':total})
     def test_cancel_over_http_and_ordinary_questions_share_the_lane(self):
         started=self.request('/api/test/runs',{});run_id=started['run']['id']
         self.request(f'/api/test/runs/{run_id}/step',{'step':0})
@@ -340,7 +341,7 @@ class IdentityAndLogTests(unittest.TestCase):
         store=self.local.app.state.store;log=store.access_log()
         self.assertEqual([(l['name'],l['ip']) for l in log['logins']],[('Ana Lima','127.0.0.1')]);self.assertEqual(log['users'][0]['logins'],1)
         kinds=[(a['kind'],a['owner'],a['ip']) for a in log['activity']]
-        self.assertIn(('ask','name:Ana Lima','127.0.0.1'),kinds);self.assertIn(('show','name:Ana Lima','127.0.0.1'),kinds)
+        self.assertIn(('ask','name:Ana Lima','127.0.0.1'),kinds);self.assertIn(('rerun','name:Ana Lima','127.0.0.1'),kinds)
         self.assertEqual(next(a for a in log['activity'] if a['kind']=='ask')['detail'],'won deals please')
         self.assertTrue((self.home/'data/history.sqlite3').exists());self.assertTrue((self.home/'data/.cookie_secret').exists())
         # Another person sees their own list only; renaming and deleting are owner scoped.

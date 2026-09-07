@@ -1,6 +1,8 @@
 """Canonical Salesforce grains, built by one shared parser from a CSV file or the raw PostgreSQL table."""
 import codecs
 import csv
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -182,6 +184,65 @@ class CanonicalViews:
     source: str = 'pandas'
     source_name: str = ''
     excluded_rows: int = 0
+    # Verified data-update time of the snapshot (see freshness_of) and the fingerprint of its raw rows.
+    freshness: dict | None = None
+    fingerprint: str | None = None
+
+
+FINGERPRINT_FIELDS = ['opportunity_no', 'product_code', 'subsidiary_subsidiary_code', 'opportunity_name', 'end_customer', 'gscm_product_group_new',
+                      'pet_name', 'stage', 'opportunity_owner', 'biz_focus', 'business_location', 'division', 'sales_type_detail', 'type',
+                      'amount_converted_currency', 'opp_amount_converted_currency', 'rollout_period_to', 'rollout_period_from', 'first_channel', 'comment',
+                      'quantity', 'amount_converted', 'opp_amount_converted', 'age', 'deal_size_on_pricing_date_usd', 'probability',
+                      'close_month', 'close_date', 'created_date', 'last_modified_date']
+
+
+def dataset_fingerprint(raw):
+    """fp1: order-independent, multiplicity-preserving fingerprint of the trimmed raw text values (the same rule the
+    acceptance evaluator documents), used to tie saved answers and reused freshness to one dataset."""
+    records = raw.to_dict('records') if isinstance(raw, pd.DataFrame) else list(raw)
+    hashes = sorted(hashlib.sha256(json.dumps([clean_text(record.get(f)) for f in FINGERPRINT_FIELDS], ensure_ascii=False).encode()).hexdigest() for record in records)
+    return 'fp1:' + hashlib.sha256('\n'.join(hashes).encode()).hexdigest()
+
+
+def unavailable(reason):
+    return {'status': 'unavailable', 'reason': reason, 'updated_at': None, 'timezone': None, 'method': None}
+
+
+def freshness_of(connection, relation, settings, quoted_relation_text):
+    """Verified data-update time of the raw relation, read inside the same consistent transaction as the rows.
+
+    Verification requires track_commit_timestamp=on, one transaction id for every row (an atomic full-table
+    replacement), and a commit timestamp for that transaction. Otherwise the time is unavailable, unless an
+    administrator-configured freshness view (B2B_FRESHNESS_VIEW, column B2B_FRESHNESS_COLUMN) records the completed
+    load. Application load time and record-modification dates are never substituted."""
+    view = (settings.get('B2B_FRESHNESS_VIEW') or '').strip()
+    if view:
+        column = (settings.get('B2B_FRESHNESS_COLUMN') or 'loaded_at').strip()
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*', view) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', column):
+            return unavailable('B2B_FRESHNESS_VIEW must be schema.view and B2B_FRESHNESS_COLUMN a column name.')
+        try:
+            value = connection.execute(text(f'SELECT CAST(max({quoted_identifier(column)}) AS text) FROM {quoted_relation_text(view)}')).scalar()
+        except Exception as error:
+            return unavailable(f'The freshness view could not be read: {describe_database_error(error, settings)}')
+        if not value:
+            return unavailable('The freshness view holds no completed load time.')
+        return {'status': 'verified', 'updated_at': str(value), 'timezone': 'database', 'method': 'freshness_view', 'reason': None}
+    try:
+        setting = connection.execute(text("SELECT current_setting('track_commit_timestamp', true)")).scalar()
+        if str(setting or '').lower() != 'on':
+            return unavailable('PostgreSQL track_commit_timestamp is not enabled, so no commit time can be verified.')
+        row = connection.execute(text(f'SELECT count(*) AS rows, count(DISTINCT xmin::text) AS transactions, count(pg_xact_commit_timestamp(xmin)) AS stamped, '
+                                      f'CAST(max(pg_xact_commit_timestamp(xmin)) AT TIME ZONE \'UTC\' AS text) AS committed FROM {quoted_relation_text(relation)}')).fetchone()
+    except Exception as error:
+        return unavailable(f'Commit timestamps could not be read: {describe_database_error(error, settings)}')
+    rows, transactions, stamped, committed = row[0], row[1], row[2], row[3]
+    if not rows:
+        return unavailable('The raw relation is empty.')
+    if transactions != 1:
+        return unavailable(f'The rows come from {transactions} transactions, so no single atomic replacement can be verified.')
+    if stamped != rows or not committed:
+        return unavailable('The commit timestamp of the loading transaction is no longer available (older than the retained commit-timestamp window).')
+    return {'status': 'verified', 'updated_at': committed.replace(' ', 'T') + '+00:00' if 'T' not in committed and '+' not in committed else committed, 'timezone': 'UTC', 'method': 'commit_timestamp', 'reason': None}
 
 
 def build_canonical_views(raw):
@@ -321,6 +382,7 @@ def read_csv_source(path, encoding='utf-8-sig', cap=100000):
 class DataRepository:
     def __init__(self, settings, engine=None):
         self.settings, self.engine = settings, engine
+        self.last_freshness = None
 
     def _build_engine(self, context):
         options = self.settings.postgres
@@ -378,9 +440,11 @@ class DataRepository:
         """Read the configured source once and return (raw frame, source kind, source name)."""
         kind = self.settings.get('DB_KIND', 'demo')
         if kind == 'demo':
+            self.last_freshness = unavailable('Fictional sample data has no data-update time.')
             return pd.DataFrame(demo_rows(), columns=RAW_COLUMNS, dtype=object), 'demo', 'fictional demo data'
         if kind == 'csv':
             path = self.settings.csv_path
+            self.last_freshness = unavailable('A local CSV export records no verified data-update time.')
             return read_csv_source(path, self.settings.get('B2B_CSV_ENCODING') or 'utf-8-sig', self._cap()), 'csv', path.name
         relation = self.settings.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project'
         try:
@@ -390,6 +454,7 @@ class DataRepository:
                     connection.execute(text('SET TRANSACTION READ ONLY'))
                     connection.execute(text(f"SET LOCAL statement_timeout = {self.settings.number('DB_TIMEOUT_SECONDS', 30, high=300) * 1000}"))
                     raw = self._read(connection, relation, self._columns(connection, relation))
+                    self.last_freshness = freshness_of(connection, relation, self.settings, quoted_relation)
         except AppError:
             raise
         except Exception as error:
@@ -402,4 +467,6 @@ class DataRepository:
         raw, source, source_name = self.load_raw()
         views = build_canonical_views(raw)
         views.source, views.source_name = source, source_name
+        views.freshness = self.last_freshness
+        views.fingerprint = dataset_fingerprint(raw)
         return views
