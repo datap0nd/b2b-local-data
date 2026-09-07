@@ -114,7 +114,15 @@ try {
         if ($Offline) { throw 'For offline setup, provide -LocalSource and a populated -DownloadCache.' }
         $encodedRef = [uri]::EscapeDataString($Ref)
         try { $commit = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/commits/${encodedRef}?cache=$installId" -Headers $githubHeaders -TimeoutSec 30).sha }
-        catch { throw 'Cannot read GitHub main/ref. For this private repository, provide the PAT_CODE token as an environment variable or in the local .env.' }
+        catch {
+            # Report the cause without revealing the token: HTTP status, GitHub's message, and which token source was used.
+            $status = ''; $detail = $_.Exception.Message
+            try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+            try { $body = (New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd(); if ($body) { $detail = ($body | ConvertFrom-Json).message } } catch { }
+            $tokenState = if (-not $githubToken) { 'no PAT_CODE token was found (environment or .env)' } elseif ($githubToken -match '^(github_pat_|ghp_|gho_|ghs_)') { "PAT_CODE token found ($($githubToken.Length) characters, GitHub format)" } else { "PAT_CODE token found ($($githubToken.Length) characters, not a recognised GitHub token format)" }
+            $hint = switch ($status) { 401 { 'The token is invalid or expired.' } 403 { 'The token is rejected: check SSO authorization and API rate limits.' } 404 { 'The token cannot see this private repository: grant it Contents: read on datap0nd/b2b-local-data (fine-grained) or the repo scope (classic).' } default { 'GitHub API is unreachable: check proxy, TLS inspection, and firewall rules for api.github.com.' } }
+            throw "Cannot read GitHub $Ref for $Repository (HTTP $status $detail). $tokenState. $hint"
+        }
         if ($commit -notmatch '^[a-f0-9]{40}$') { throw 'GitHub did not return an exact commit.' }
         Write-Host "Refreshing application from $Repository at $commit"
         $archive = Join-Path $DownloadCache "$commit-$installId.zip"
