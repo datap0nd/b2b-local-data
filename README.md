@@ -155,11 +155,13 @@ The FastAPI process, SQL connection pool, and conversation store stay alive. A c
 
 Browser sorting affects displayed rows only. CSV exports those displayed rows. Chart controls do not call SQL or Qwen, and charts display at most 30 groups. The result preview limit is applied after complete filtering/aggregation/sorting, with visible truncation information.
 
-## Identity and hosting
+## People, history, and the access log
 
-The app listens on loopback and supports the current local Windows user's identity when `B2B_ALLOW_LOCALHOST_IDENTITY=true`. For a corporate reverse proxy, set the authenticated user header, exact trusted proxy addresses, a shared secret of at least 32 characters, and `B2B_PUBLIC_ORIGIN`. The proxy must inject `X-B2B-Proxy-Secret`, overwrite the configured user header, and strip incoming copies. Set localhost identity to false for a proxy-only deployment. Arbitrary browser-supplied user headers are not trusted.
+The page is a chat: conversations on the left, messages with their tables and charts in the middle, and the question box at the bottom. On first visit each person enters their name (`B2B_IDENTITY=name`, the default); the name is kept in a signed cookie and every conversation is scoped to it. `B2B_IDENTITY=windows` uses the signed-in Windows user instead, for a single-person PC on loopback. A corporate reverse proxy can still supply the identity header with the shared secret described in `.env.example`; that header wins when present.
 
-History is scoped by authenticated identity. The SQL source is shared for this team; this is not per-user Salesforce row-level authorization. TLS termination and the actual corporate sign-in mechanism remain deployment configuration. The installer does not change firewall rules, install services, or expose a public listener.
+Everything lives in the local SQLite file `data\history.sqlite3` in the install folder: each person's conversations with every question, the model's raw reply, the effective plan, and the answer summary; the `logins` table with name, IP address, browser, and time for every sign-in; and the `activity` table with owner, IP address, and time for every question, preview, re-shown result, deletion, and acceptance run. `GET /api/access-log` returns the recent entries. Result rows and credentials are never stored; an earlier answer's table is recomputed from its plan when re-shown.
+
+The app listens on loopback by default. Set `B2B_LISTEN_HOST=0.0.0.0` to let colleagues open `http://<this-pc>:8765`; requests must then be same-origin on the app port, and the name prompt identifies each person. The installer does not change firewall rules, install services, or expose a public listener. History is scoped by name, not by Salesforce authorization: the SQL source is shared for this team.
 
 ## Updates and rollback
 

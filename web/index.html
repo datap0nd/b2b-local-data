@@ -2,42 +2,50 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>B2B Local Data</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script><script defer src="/test.js"></script></head>
 <body>
-<header><a href="/" class="brand"><span class="mark">b.</span> B2B Local Data</a><div class="header-right"><span id="readiness" class="readiness" hidden></span><button id="test-open" class="quiet" type="button" title="Run the standardized live-data acceptance test">Test</button><span class="local">Local workspace</span></div></header>
-<main>
-  <div class="intro"><p class="eyebrow">YOUR OPPORTUNITIES, IN FOCUS</p><h1>Ask a question.<br>Get a table.</h1><p class="sub">Explore your Salesforce extract, from the whole opportunity to each product.</p></div>
-  <section class="ask-card" aria-label="Ask your data">
-    <div class="status-bar"><div id="status" class="status">Connecting to your workspace…</div><button id="refresh" class="quiet data-action">Refresh data</button></div>
-    <form id="ask-form">
-      <label for="question">What would you like to see?</label>
-      <textarea id="question" maxlength="4000" rows="3" placeholder="Show the Won opportunities closing in 2026, with their products combined." required></textarea>
-      <div class="actions"><label class="layout">Table layout <select id="view"><option value="auto">Ask Qwen to choose</option><option value="summary">Summary · per opportunity</option><option value="detail">Detail · per opportunity + SKU</option></select></label><button id="ask" type="submit">Ask Qwen <span aria-hidden="true">↗</span></button></div>
+<div class="app">
+  <aside class="sidebar" aria-label="Conversations">
+    <div class="sidebar-top"><span class="brand"><span class="mark">b.</span> B2B</span><button id="new-chat" class="icon-button" type="button" title="New chat" aria-label="New chat">＋</button></div>
+    <nav id="chat-list"></nav>
+    <div class="sidebar-foot">
+      <div class="me"><span id="me-name"></span><button id="change-name" class="link" type="button">Change</button></div>
+      <div class="foot-row"><button id="refresh" class="link data-action" type="button">Refresh data</button><button id="test-open" class="link" type="button">Test</button><span id="readiness" class="readiness" hidden></span></div>
+      <div id="status" class="status"></div>
+    </div>
+  </aside>
+  <main class="chat">
+    <div id="messages" class="messages" aria-live="polite">
+      <div id="empty" class="empty"><h1>What would you like to see?</h1>
+        <div id="samples" hidden><span id="samples-label" hidden></span><button class="chip sample data-action" type="button" data-view="summary">Summary table</button><button class="chip sample data-action" type="button" data-view="detail">Detailed table</button><button class="chip sample data-action" type="button" data-view="summary" data-intent="chart">Amounts by stage</button></div>
+      </div>
+    </div>
+    <form id="ask-form" class="composer" autocomplete="off">
+      <textarea id="question" rows="1" maxlength="4000" placeholder="Ask about your opportunities…"></textarea>
+      <div class="composer-row"><select id="view" aria-label="Table layout"><option value="auto">Auto layout</option><option value="summary">Summary</option><option value="detail">Detail</option></select><button id="ask" type="submit" class="send" title="Send" aria-label="Send">↑</button></div>
     </form>
-    <div id="samples" hidden><span id="samples-label">Try the fictional dataset</span><button class="quiet sample data-action" data-view="summary">Summary table</button><button class="quiet sample data-action" data-view="detail">Detailed table</button><button class="quiet sample data-action" data-view="summary" data-intent="chart">Amounts by stage</button></div>
-  </section>
-  <div class="conversation-top"><label for="session-picker">Conversation</label><select id="session-picker" aria-label="Saved conversations"></select><button id="rerun" class="quiet data-action" hidden>Run saved query</button><button id="reset" class="quiet data-action">New conversation</button></div>
-  <div id="conversation" aria-live="polite"><p class="empty">Qwen will ask a follow-up when your question needs more detail.</p></div>
-  <div id="suggestions" aria-label="Suggested follow-ups"></div>
-<section id="result" class="result-view" hidden>
-    <div class="result-header"><div><h2 class="result-title">Your table</h2><p class="result-meta"></p></div><button class="quiet export" type="button">Download CSV ↓</button></div>
-    <p class="scope"></p><div class="warnings" role="status"></div>
-    <div class="chart-panel" hidden><label>Chart measure <select class="chart-measure"></select></label><canvas class="chart" role="img" aria-label="Chart of the query result"></canvas><p class="chart-caption"></p></div>
+  </main>
+</div>
+<div id="login" class="modal" hidden>
+  <form id="login-form" class="modal-card"><h2>Your name</h2><p>Used to keep your conversations.</p><input id="login-name" maxlength="60" autocomplete="name" placeholder="First and last name" required><button type="submit">Continue</button></form>
+</div>
+<template id="result-template">
+  <section class="result-view">
+    <div class="result-header"><div><span class="result-title"></span><span class="result-meta"></span></div><button class="link export" type="button">CSV</button></div>
+    <div class="warnings" role="status"></div>
+    <div class="chart-panel" hidden><label class="chart-measure-label">Measure <select class="chart-measure"></select></label><canvas class="chart" role="img" aria-label="Chart of the query result"></canvas><p class="chart-caption"></p></div>
     <div class="table-wrap"><table class="table"></table></div>
-    <details><summary>Applied filters</summary><pre class="filters"></pre></details>
   </section>
-  <section id="test-panel" class="test-panel" hidden aria-label="Acceptance test">
-    <div class="test-head"><div><h2>Standardized live-data acceptance test</h2><p id="test-suite" class="result-meta">Loading the suite…</p><p id="test-state" class="result-meta"></p></div>
-      <div class="test-controls"><button id="test-start" type="button">Run all checks</button><button id="test-resume" class="quiet" type="button" hidden>Resume</button><button id="test-cancel" class="quiet" type="button" disabled>Cancel</button><button id="test-report" class="quiet" type="button" disabled>Download report</button><button id="test-compare" class="quiet" type="button" disabled>Compare previous run</button><button id="test-close" class="quiet" type="button">Close</button></div></div>
-    <div class="test-grid"><div><span class="eyebrow">CASE</span><p id="test-case">Not started</p></div><div><span class="eyebrow">ELAPSED</span><p id="test-elapsed">0 s</p></div><div><span class="eyebrow">PROGRESS</span><p id="test-progress">—</p></div></div>
-    <div class="test-grid"><div><span class="eyebrow">PROMPT</span><p id="test-prompt" class="mono"></p></div><div><span class="eyebrow">QWEN ANSWER</span><p id="test-answer" class="mono"></p></div><div><span class="eyebrow">CHECKS</span><p id="test-checks"></p></div></div>
-    <pre id="test-comparison" class="mono" hidden></pre>
-    <section id="test-result" class="result-view" hidden>
-    <div class="result-header"><div><h2 class="result-title">Your table</h2><p class="result-meta"></p></div><button class="quiet export" type="button">Download CSV ↓</button></div>
-    <p class="scope"></p><div class="warnings" role="status"></div>
-    <div class="chart-panel" hidden><label>Chart measure <select class="chart-measure"></select></label><canvas class="chart" role="img" aria-label="Chart of the query result"></canvas><p class="chart-caption"></p></div>
+</template>
+<section id="test-panel" class="test-panel" hidden aria-label="Acceptance test">
+  <div class="test-head"><div><h2>Acceptance test</h2><p id="test-suite" class="result-meta">Loading the suite…</p><p id="test-state" class="result-meta"></p></div>
+    <div class="test-controls"><button id="test-start" type="button">Run all checks</button><button id="test-resume" class="quiet" type="button" hidden>Resume</button><button id="test-cancel" class="quiet" type="button" disabled>Cancel</button><button id="test-report" class="quiet" type="button" disabled>Download report</button><button id="test-compare" class="quiet" type="button" disabled>Compare previous run</button><button id="test-close" class="quiet" type="button">Close</button></div></div>
+  <div class="test-grid"><div><span class="eyebrow">CASE</span><p id="test-case">Not started</p></div><div><span class="eyebrow">ELAPSED</span><p id="test-elapsed">0 s</p></div><div><span class="eyebrow">PROGRESS</span><p id="test-progress">—</p></div></div>
+  <div class="test-grid"><div><span class="eyebrow">PROMPT</span><p id="test-prompt" class="mono"></p></div><div><span class="eyebrow">QWEN ANSWER</span><p id="test-answer" class="mono"></p></div><div><span class="eyebrow">CHECKS</span><p id="test-checks"></p></div></div>
+  <pre id="test-comparison" class="mono" hidden></pre>
+  <section id="test-result" class="result-view" hidden>
+    <div class="result-header"><div><span class="result-title"></span><span class="result-meta"></span></div><button class="link export" type="button">CSV</button></div>
+    <div class="warnings" role="status"></div>
+    <div class="chart-panel" hidden><label class="chart-measure-label">Measure <select class="chart-measure"></select></label><canvas class="chart" role="img" aria-label="Chart of the query result"></canvas><p class="chart-caption"></p></div>
     <div class="table-wrap"><table class="table"></table></div>
-    <details><summary>Applied filters</summary><pre class="filters"></pre></details>
   </section>
-  </section>
-  <footer>Qwen plans the query. Your local app calculates the result. Sorting and chart controls work in the browser.</footer>
-</main>
+</section>
 </body></html>

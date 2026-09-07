@@ -30,8 +30,9 @@ def main():
         from ui_app import create_app
         app=create_app(settings)
         port=settings.number('APP_PORT',8765,high=65535)
-        print(f'B2B Salesforce Query Agent: http://127.0.0.1:{port} (database: {settings.get("DB_KIND","demo")})',flush=True)
-        uvicorn.run(app,host='127.0.0.1',port=port,access_log=False,log_level='critical',proxy_headers=False)
+        host=settings.listen_host
+        print(f'B2B Salesforce Query Agent: http://{"127.0.0.1" if host in ("0.0.0.0","::") else host}:{port} (database: {settings.get("DB_KIND","demo")}, listening on {host})',flush=True)
+        uvicorn.run(app,host=host,port=port,access_log=False,log_level='critical',proxy_headers=False)
     except AppError as error:
         parser.exit(1,str(error)+'\n')
 

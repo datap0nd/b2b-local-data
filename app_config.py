@@ -110,8 +110,13 @@ class Settings:
             values['B2B_LLM_ALLOWED_HOSTS'] = ','.join(sorted(allowed))
         if not values.get('DB_KIND'):
             values['DB_KIND'] = 'postgres' if values.get('PGURL') else 'demo'
+        # The shipped vocabulary always applies; a local business_rules.md in the install folder adds to it.
+        rules = (ROOT / 'config/business_rules.example.md').read_text(encoding='utf-8-sig')
         rules_path = home / 'business_rules.md'
-        rules = (rules_path if rules_path.exists() else ROOT / 'config/business_rules.example.md').read_text(encoding='utf-8-sig')
+        if rules_path.exists():
+            local_rules = rules_path.read_text(encoding='utf-8-sig')
+            if local_rules.strip() and local_rules.strip() != rules.strip():
+                rules = rules.rstrip() + '\n\n# Local supplements\n' + local_rules
         settings = cls(home, values, rules)
         settings.sources = sources
         settings.validate()
@@ -147,6 +152,10 @@ class Settings:
         return self.home / 'data'
 
     @property
+    def listen_host(self):
+        return (self.get('B2B_LISTEN_HOST') or '127.0.0.1').strip()
+
+    @property
     def csv_path(self):
         configured = self.get('B2B_CSV_PATH')
         if not configured:
@@ -180,6 +189,11 @@ class Settings:
         if self.get('DB_KIND','demo') not in ('demo','postgres','csv'):
             raise AppError('Set DB_KIND=postgres for the Salesforce replica, csv for a local export, or demo for fictional data.')
         self.number('APP_PORT',8765,high=65535)
+        if self.get('B2B_IDENTITY','name') not in ('name','windows'):
+            raise AppError('B2B_IDENTITY must be name (ask each person for their name) or windows (the signed-in Windows user on this PC).')
+        host = self.listen_host
+        if not re.fullmatch(r'[A-Za-z0-9.\-:\[\]]+', host):
+            raise AppError('B2B_LISTEN_HOST must be an IP address or host name.')
         self.flag('B2B_ALLOW_LOCALHOST_IDENTITY',True)
         if (self.get('DB_SSL') or 'true').lower() not in ('true','false','prefer'):
             raise AppError('DB_SSL must be true (verified TLS), prefer (TLS without certificate checks, plain fallback), or false.')

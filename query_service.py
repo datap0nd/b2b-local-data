@@ -46,9 +46,9 @@ class QueryService:
         plan=merge_plan(previous,incoming)
         returned=incoming.model_dump(mode='json')
         if plan.intent==Intent.CLARIFY:
-            store.append(owner,session_id,question,plan.clarification)
+            store.append(owner,session_id,question,plan.clarification,model_reply=returned)
             return {'kind':'clarify','question':plan.clarification,'suggestions':plan.suggestions,'session_id':session_id,'returned_plan':returned}
         table=self.executor.execute(views,plan)
         table['snapshot_at']=snapshot_at
-        store.append(owner,session_id,question,describe_result(plan,table),plan)
+        store.append(owner,session_id,question,describe_result(plan,table),plan,model_reply=returned)
         return {'kind':'table','table':table,'plan':plan.model_dump(mode='json'),'suggestions':plan.suggestions,'session_id':session_id,'returned_plan':returned}

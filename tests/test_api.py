@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest.mock import MagicMock,patch
 from urllib.error import HTTPError
-from urllib.request import Request,build_opener,ProxyHandler
+from urllib.request import HTTPCookieProcessor,Request,build_opener,ProxyHandler
 
 import uvicorn
 from app_config import AppError,Settings
@@ -23,7 +23,7 @@ from test_csv_source import fixture_rows,write_export
 
 class LocalServer:
     """One persistent app process per test class, reached over loopback HTTP like the browser does."""
-    def __init__(self,settings,repository=None,planner=None):
+    def __init__(self,settings,repository=None,planner=None,name='Test Person'):
         self.sock=socket.socket();self.sock.bind(('127.0.0.1',0));self.port=self.sock.getsockname()[1]
         settings.values['APP_PORT']=str(self.port);settings.values.setdefault('B2B_ALLOW_LOCALHOST_IDENTITY','true')
         self.app=create_app(settings,repository=repository,planner=planner)
@@ -32,7 +32,10 @@ class LocalServer:
         deadline=time.monotonic()+5
         while not self.server.started and time.monotonic()<deadline:time.sleep(.01)
         if not self.server.started:raise RuntimeError('Test API failed to start')
-        self.base=f'http://127.0.0.1:{self.port}';self.opener=build_opener(ProxyHandler({}))
+        self.base=f'http://127.0.0.1:{self.port}';self.opener=build_opener(ProxyHandler({}),HTTPCookieProcessor())
+        # Name identity is the default: log in like the browser does so owner-scoped calls work.
+        if settings.get('B2B_IDENTITY','name')=='name' and name:self.login(name)
+    def login(self,name):return self.request('/api/login',{'name':name})
     def stop(self):self.server.should_exit=True;self.worker.join(5);self.sock.close()
     def request(self,path,body=None,**headers):
         request=Request(self.base+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'}|headers)
@@ -55,7 +58,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(result['table']['rows'][0]['opportunity_amount'],'750')
         saved=self.request('/api/sessions/'+result['session_id'])
         self.assertEqual(saved['active_plan']['grain'],'opportunity')
-        self.assertEqual(saved['turns'][0]['question'],'Preview table (summary) from Fictional sample data.')
+        self.assertEqual(saved['turns'][0]['question'],'Preview: summary table')
         rerun=self.request('/api/rerun',{'session_id':result['session_id']})
         self.assertEqual(rerun['table']['rows'],result['table']['rows'])
     def test_status_labels_source_and_previews(self):
@@ -112,7 +115,7 @@ class CsvModeTests(unittest.TestCase):
         chart=self.request('/api/sample',{'view':'summary','intent':'chart','session_id':summary['session_id']})
         self.assertEqual(chart['table']['chart']['type'],'bar')
         self.assertEqual(self.planner.plan.call_count,before)
-        self.assertEqual(self.request('/api/sessions/'+summary['session_id'])['turns'][0]['question'],'Preview table (summary) from CSV file salesforce.csv.')
+        self.assertEqual(self.request('/api/sessions/'+summary['session_id'])['turns'][0]['question'],'Preview: summary table')
     def test_questions_still_use_the_configured_model(self):
         before=self.planner.plan.call_count
         reply=self.request('/api/ask',{'question':'total deal size'})
@@ -290,3 +293,68 @@ class PlannerFailureTests(unittest.TestCase):
             with self.assertRaises(AppError) as error:PlannerClient(self.settings(server.server_address[1])).plan('Show deals',[])
             self.assertIn('intent',str(error.exception));self.assertIn('dance',str(error.exception))
         finally:server.shutdown();server.server_close();worker.join()
+
+
+class IdentityAndLogTests(unittest.TestCase):
+    """Name identity, the login/activity log with IP addresses, per-person history with model replies."""
+    @classmethod
+    def setUpClass(cls):
+        cls.temp=tempfile.TemporaryDirectory();cls.home=Path(cls.temp.name)
+        views=build_canonical_views(demo_rows());views.source,views.source_name='demo','fictional demo data'
+        repository=MagicMock();repository.load.return_value=views
+        cls.planner=MagicMock();cls.planner.plan.return_value=parse_plan({'filters':[{'field':'stage','operator':'eq','value':'Won'}]})
+        cls.local=LocalServer(Settings(cls.home,{'DB_KIND':'demo'}),repository=repository,planner=cls.planner,name=None)
+    @classmethod
+    def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
+    def request(self,path,body=None,**headers):return self.local.request(path,body,**headers)
+    def test_login_is_required_then_logged_with_ip_and_history_is_per_person(self):
+        me=self.request('/api/me');self.assertTrue(me['login_required']);self.assertEqual(me['ip'],'127.0.0.1')
+        with self.assertRaises(HTTPError) as error:self.request('/api/sessions')
+        self.assertEqual(error.exception.code,401);self.assertTrue(json.load(error.exception)['login_required'])
+        status=self.request('/api/status');self.assertIsNone(status['qualification'])
+        for bad in ['   ','x'*61,'bad\x01name']:
+            with self.subTest(bad=bad),self.assertRaises(HTTPError):self.request('/api/login',{'name':bad})
+        self.assertEqual(self.request('/api/login',{'name':'  Ana   Lima '})['name'],'Ana Lima')
+        me=self.request('/api/me');self.assertEqual((me['login_required'],me['name'],me['owner']),(False,'Ana Lima','name:Ana Lima'))
+        asked=self.request('/api/ask',{'question':'won deals please'})
+        saved=self.request('/api/sessions/'+asked['session_id'])
+        self.assertEqual(saved['turns'][0]['model_reply']['filters'][0]['value'],'Won');self.assertTrue(saved['turns'][0]['response'].startswith('Table (opportunity summary): 2 rows'))
+        shown=self.request(f"/api/sessions/{asked['session_id']}/turns/{saved['turns'][0]['id']}/run",{})
+        self.assertEqual(shown['table']['total_rows'],2)
+        store=self.local.app.state.store;log=store.access_log()
+        self.assertEqual([(l['name'],l['ip']) for l in log['logins']],[('Ana Lima','127.0.0.1')]);self.assertEqual(log['users'][0]['logins'],1)
+        kinds=[(a['kind'],a['owner'],a['ip']) for a in log['activity']]
+        self.assertIn(('ask','name:Ana Lima','127.0.0.1'),kinds);self.assertIn(('show','name:Ana Lima','127.0.0.1'),kinds)
+        self.assertEqual(next(a for a in log['activity'] if a['kind']=='ask')['detail'],'won deals please')
+        self.assertTrue((self.home/'data/history.sqlite3').exists());self.assertTrue((self.home/'data/.cookie_secret').exists())
+        # Another person sees their own list only; renaming and deleting are owner scoped.
+        self.request('/api/logout',{});self.request('/api/login',{'name':'Bo Berg'})
+        self.assertEqual(self.request('/api/sessions')['sessions'],[])
+        with self.assertRaises(HTTPError):self.request('/api/sessions/'+asked['session_id'])
+        self.request('/api/logout',{});self.request('/api/login',{'name':'Ana Lima'})
+        self.assertEqual(len(self.request('/api/sessions')['sessions']),1);self.assertEqual(store.access_log()['users'][0]['logins'],2)
+        self.request(f"/api/sessions/{asked['session_id']}/title",{'title':'Won deals'})
+        self.assertEqual(self.request('/api/sessions')['sessions'][0]['title'],'Won deals')
+        request=Request(self.local.base+'/api/sessions/'+asked['session_id'],method='DELETE')
+        with self.local.opener.open(request,timeout=10) as response:self.assertTrue(json.load(response)['ok'])
+        self.assertEqual(self.request('/api/sessions')['sessions'],[])
+    def test_forged_cookie_is_ignored(self):
+        request=Request(self.local.base+'/api/me',headers={'Cookie':'b2b_user=QW5h.deadbeef'})
+        with build_opener(ProxyHandler({})).open(request,timeout=10) as response:self.assertTrue(json.load(response)['login_required'])
+
+
+class WindowsIdentityAndLanTests(unittest.TestCase):
+    def test_windows_identity_needs_no_login_and_lan_hosts_are_accepted_same_origin(self):
+        temp=tempfile.TemporaryDirectory();home=Path(temp.name)
+        repository=MagicMock();repository.load.return_value=build_canonical_views(demo_rows())
+        local=LocalServer(Settings(home,{'DB_KIND':'demo','B2B_IDENTITY':'windows','B2B_LISTEN_HOST':'0.0.0.0'}),repository=repository,planner=MagicMock(),name=None)
+        try:
+            me=local.request('/api/me');self.assertFalse(me['login_required']);self.assertTrue(me['owner'].startswith('local:'))
+            request=Request(local.base+'/api/sessions',headers={'Host':f'workpc.corp:{local.port}','Origin':f'http://workpc.corp:{local.port}'})
+            with local.opener.open(request,timeout=10) as response:self.assertIn('sessions',json.load(response))
+            with self.assertRaises(HTTPError) as error:
+                local.opener.open(Request(local.base+'/api/sessions',headers={'Host':f'workpc.corp:{local.port}','Origin':'http://evil.example'}),timeout=10)
+            self.assertEqual(error.exception.code,403)
+            with self.assertRaises(HTTPError) as error:local.opener.open(Request(local.base+'/api/sessions',headers={'Host':'workpc.corp:9999'}),timeout=10)
+            self.assertEqual(error.exception.code,403)
+        finally:local.stop();temp.cleanup()
