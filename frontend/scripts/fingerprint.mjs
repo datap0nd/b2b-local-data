@@ -20,7 +20,8 @@ function walk(dir, out) {
 export function fingerprint() {
   const hash = createHash('sha256');
   const files = [...inputs.map(f => join(root, f)).filter(existsSync), ...walk(join(root, 'src'), [])];
-  for (const file of files) { hash.update(relative(root, file).replaceAll('\\', '/') + '\n'); hash.update(readFileSync(file)); hash.update('\n'); }
+  // Line endings are normalized so a Windows checkout (CRLF) and a CI checkout (LF) fingerprint identically.
+  for (const file of files) { hash.update(relative(root, file).replaceAll('\\', '/') + '\n'); hash.update(readFileSync(file, 'utf8').replaceAll('\r\n', '\n')); hash.update('\n'); }
   return 'sha256:' + hash.digest('hex');
 }
 
