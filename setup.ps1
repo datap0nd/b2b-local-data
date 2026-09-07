@@ -44,6 +44,8 @@ if (-not (Test-Path -LiteralPath $envPath) -and (Test-Path -LiteralPath (Join-Pa
 }
 $localValues = Read-EnvFile $envPath
 $githubToken = Setting 'B2B_GITHUB_TOKEN' $localValues
+# Work PCs already carry the data-governance GitHub token as the PAT_Code environment variable.
+if (-not $githubToken -and (Test-Path -LiteralPath 'Env:PAT_Code')) { $githubToken = [Environment]::GetEnvironmentVariable('PAT_Code') }
 $githubHeaders = @{ 'User-Agent'='B2B-Local-Data-Setup'; 'Accept'='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
 if ($githubToken) { $githubHeaders['Authorization'] = "Bearer $githubToken" }
 if (-not $DownloadCache) { $DownloadCache = Join-Path $InstallDir '.downloads' }
@@ -61,7 +63,7 @@ function Download-File([string]$Url, [string]$Path, [hashtable]$Headers) {
             Invoke-WebRequest -Uri $Url -OutFile $Path -Headers $Headers -UseBasicParsing -TimeoutSec 120
             return
         } catch {
-            if ($attempt -eq 3) { throw 'GitHub download failed. Check access and B2B_GITHUB_TOKEN in .env (or the process environment).' }
+            if ($attempt -eq 3) { throw 'GitHub download failed. Check access and the PAT_Code environment variable (or B2B_GITHUB_TOKEN in .env).' }
             Start-Sleep -Seconds 2
         }
     }
@@ -112,7 +114,7 @@ try {
         if ($Offline) { throw 'For offline setup, provide -LocalSource and a populated -DownloadCache.' }
         $encodedRef = [uri]::EscapeDataString($Ref)
         try { $commit = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/commits/${encodedRef}?cache=$installId" -Headers $githubHeaders -TimeoutSec 30).sha }
-        catch { throw 'Cannot read GitHub main/ref. For this private repository, set B2B_GITHUB_TOKEN in the local .env or process environment.' }
+        catch { throw 'Cannot read GitHub main/ref. For this private repository, provide the PAT_Code environment variable or B2B_GITHUB_TOKEN in the local .env.' }
         if ($commit -notmatch '^[a-f0-9]{40}$') { throw 'GitHub did not return an exact commit.' }
         Write-Host "Refreshing application from $Repository at $commit"
         $archive = Join-Path $DownloadCache "$commit-$installId.zip"
