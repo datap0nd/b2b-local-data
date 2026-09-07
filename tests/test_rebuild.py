@@ -2,6 +2,7 @@
 history migration with a restorable backup, the verified data-update time adapter, Summary/Detailed conservation
 against the reference evaluator, per-currency metadata, and the deterministic answer text."""
 from decimal import Decimal
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -115,7 +116,7 @@ class HistoryMigrationTests(unittest.TestCase):
     def test_version_two_database_is_backed_up_before_migration_and_the_backup_restores(self):
         with tempfile.TemporaryDirectory() as home:
             path = Path(home) / 'data' / 'history.sqlite3'; path.parent.mkdir()
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 connection.executescript('''
                     CREATE TABLE sessions (id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL DEFAULT 'New conversation', active_plan TEXT,
                         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
@@ -126,13 +127,13 @@ class HistoryMigrationTests(unittest.TestCase):
                     PRAGMA user_version=2;''')
             store = HistoryStore(path)
             self.assertIsNotNone(store.backup); self.assertTrue(store.backup.name.startswith('history.sqlite3.v2-backup-'))
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 self.assertEqual(connection.execute('PRAGMA user_version').fetchone()[0], SCHEMA_VERSION)
                 self.assertIn('results', {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")})
                 self.assertIn('kind', {r[1] for r in connection.execute('PRAGMA table_info(turns)')})
             turns = store.read('name:Ann', 's1')['turns']
             self.assertEqual(turns[0]['question'], 'old question'); self.assertFalse(turns[0]['has_result'])
-            with sqlite3.connect(store.backup) as connection:
+            with closing(sqlite3.connect(store.backup)) as connection, connection:
                 self.assertEqual(connection.execute('PRAGMA user_version').fetchone()[0], 2)
                 self.assertNotIn('results', {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")})
             # Rollback path: an older release reads the backup copy unchanged; reopening it here migrates again from a fresh backup.

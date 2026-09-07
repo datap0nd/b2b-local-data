@@ -1,7 +1,8 @@
 -- LEGACY VIEW REFRESH. The application (0.4.0 and later) reads the raw table directly and does not
 -- depend on these views or on the version ledger; the read-only application role needs no DDL.
 -- Apply this only if other consumers still use the derived views, so that they agree with the app:
---   * day-first dates accept one- or two-digit day and month (e.g. 1/12/2022) and stay NULL when invalid;
+--   * day-first dates accept one- or two-digit day and month (e.g. 1/12/2022), ISO YYYY-MM-DD text is accepted
+--     as well (typed date columns rendered as text), and invalid dates stay NULL;
 --   * the four columns added later (1st_channel, age, comment, deal_size_on_pricing_date_usd) are exposed
 --     as opportunity attributes selected with MIN, never summed, and counted in has_quality_warning.
 -- Run manually with a migration-capable role. Requires migration 001 to have been applied first.
@@ -11,6 +12,15 @@ CREATE OR REPLACE FUNCTION bi_reporting.b2b_day_first_date(value text) RETURNS d
 LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE trimmed text := btrim(value); parts text[];
 BEGIN
+    -- ISO text (YYYY-MM-DD, optionally followed by a time) is accepted exactly like the application, which
+    -- receives typed date/timestamp columns cast to text; anything else must be day-first D/M/YYYY.
+    IF trimmed ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9:.+-]*Z?)?$' THEN
+        BEGIN
+            RETURN make_date(substr(trimmed, 1, 4)::integer, substr(trimmed, 6, 2)::integer, substr(trimmed, 9, 2)::integer);
+        EXCEPTION WHEN OTHERS THEN
+            RETURN NULL;
+        END;
+    END IF;
     IF trimmed !~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$' THEN RETURN NULL; END IF;
     parts := string_to_array(trimmed, '/');
     BEGIN
