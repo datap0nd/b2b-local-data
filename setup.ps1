@@ -60,13 +60,15 @@ $script:archiveReused = 0
 
 function Download-File([string]$Url, [string]$Path, [hashtable]$Headers) {
     if ($Offline) { throw "Offline mode: missing required archive $([IO.Path]::GetFileName($Path))" }
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
+    # Corporate proxies drop connections intermittently; retry with backoff like the data-governance installer.
+    for ($attempt = 1; $attempt -le 8; $attempt++) {
         try {
-            Invoke-WebRequest -Uri $Url -OutFile $Path -Headers $Headers -UseBasicParsing -TimeoutSec 120
+            Invoke-WebRequest -Uri $Url -OutFile $Path -Headers $Headers -UseBasicParsing -TimeoutSec 180
             return
         } catch {
-            if ($attempt -eq 3) { throw 'GitHub download failed. Check access and the DG_GITHUB_TOKEN token.' }
-            Start-Sleep -Seconds 2
+            if ($attempt -eq 8) { throw "GitHub download failed after 8 attempts ($($_.Exception.Message)). Check the corporate proxy and the DG_GITHUB_TOKEN token." }
+            Write-Host "  Download attempt $attempt failed: $($_.Exception.Message). Retrying in $([Math]::Min(30, $attempt * 3)) seconds (corporate proxy may be transient)."
+            Start-Sleep -Seconds ([Math]::Min(30, $attempt * 3))
         }
     }
 }
@@ -91,8 +93,13 @@ function Get-LockedArchive($Item, [string]$Tag) {
     }
     if ($Offline) { throw "Offline mode: missing or invalid cached archive $($Item.filename)" }
     if (-not $script:releaseAssets) {
-        try { $script:releaseAssets = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/tags/$Tag" -Headers $githubHeaders -TimeoutSec 30).assets }
-        catch { throw 'Portable GitHub release is unavailable. Check the DG_GITHUB_TOKEN token and that this release has been published.' }
+        for ($attempt = 1; $attempt -le 4 -and -not $script:releaseAssets; $attempt++) {
+            try { $script:releaseAssets = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/tags/$Tag" -Headers $githubHeaders -TimeoutSec 60).assets }
+            catch {
+                if ($attempt -eq 4) { throw "Portable GitHub release is unavailable ($($_.Exception.Message)). Check the corporate proxy, the DG_GITHUB_TOKEN token, and that this release has been published." }
+                Start-Sleep -Seconds ($attempt * 3)
+            }
+        }
     }
     $asset = @($script:releaseAssets | Where-Object { $_.name -ceq $Item.filename -and $_.state -eq 'uploaded' })
     if ($asset.Count -ne 1 -or "$($asset[0].id)" -notmatch '^[0-9]+$') { throw "Portable release is missing $($Item.filename)." }
@@ -115,8 +122,20 @@ try {
     } else {
         if ($Offline) { throw 'For offline setup, provide -LocalSource and a populated -DownloadCache.' }
         $encodedRef = [uri]::EscapeDataString($Ref)
-        try { $commit = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/commits/${encodedRef}?cache=$installId" -Headers $githubHeaders -TimeoutSec 30).sha }
-        catch {
+        $commit = $null
+        for ($attempt = 1; $attempt -le 4 -and -not $commit; $attempt++) {
+            try { $commit = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/commits/${encodedRef}?cache=$installId-$attempt" -Headers $githubHeaders -TimeoutSec 60).sha }
+            catch {
+                $lookupError = $_
+                # Transient proxy or network faults are retried with backoff; authentication failures are not.
+                $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -in 401, 404 -or $attempt -eq 4) { break }
+                Write-Host "GitHub lookup attempt $attempt failed ($($_.Exception.Message)); retrying in $($attempt * 3) seconds."
+                Start-Sleep -Seconds ($attempt * 3)
+            }
+        }
+        if (-not $commit) {
+            $_ = $lookupError
             # Report the cause without revealing the token: HTTP status, GitHub's message, and which token source was used.
             $status = ''; $detail = $_.Exception.Message
             try { $status = [int]$_.Exception.Response.StatusCode } catch { }
