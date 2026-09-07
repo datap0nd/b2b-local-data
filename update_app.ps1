@@ -5,5 +5,7 @@ param(
     [string]$Ref = 'main'
 )
 $ErrorActionPreference = 'Stop'
-& (Join-Path $PSScriptRoot 'setup.ps1') -InstallDir $InstallDir -Ref $Ref
+$here = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { (Get-Location).Path }
+if (-not $InstallDir) { $InstallDir = $here }
+& (Join-Path $here 'setup.ps1') -InstallDir $InstallDir -Ref $Ref
 exit $LASTEXITCODE

@@ -31,16 +31,18 @@ function Setting([string]$Key, [hashtable]$Values) {
     return $Values[$Key]
 }
 
-$bootstrapValues = Read-EnvFile (Join-Path $PSScriptRoot '.env')
+# The script folder, even when the script text was pasted into a console ($PSScriptRoot empty).
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { (Get-Location).Path }
+$bootstrapValues = Read-EnvFile (Join-Path $scriptRoot '.env')
 if (-not $InstallDir) { $InstallDir = Setting 'B2B_INSTALL_ROOT' $bootstrapValues }
-if (-not $InstallDir) { $InstallDir = $PSScriptRoot }
-if (-not [IO.Path]::IsPathRooted($InstallDir)) { $InstallDir = Join-Path $PSScriptRoot $InstallDir }
+if (-not $InstallDir) { $InstallDir = $scriptRoot }
+if (-not [IO.Path]::IsPathRooted($InstallDir)) { $InstallDir = Join-Path $scriptRoot $InstallDir }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 # A downloaded repo can supply the template before private-repository authentication.
 $envPath = Join-Path $InstallDir '.env'
-if (-not (Test-Path -LiteralPath $envPath) -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.env.example'))) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.env.example') -Destination $envPath
+if (-not (Test-Path -LiteralPath $envPath) -and (Test-Path -LiteralPath (Join-Path $scriptRoot '.env.example'))) {
+    Copy-Item -LiteralPath (Join-Path $scriptRoot '.env.example') -Destination $envPath
 }
 $localValues = Read-EnvFile $envPath
 # DG_GITHUB_TOKEN is the same GitHub token the data-governance installer uses: an environment variable, or a .env line.
