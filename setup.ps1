@@ -43,8 +43,8 @@ if (-not (Test-Path -LiteralPath $envPath) -and (Test-Path -LiteralPath (Join-Pa
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.env.example') -Destination $envPath
 }
 $localValues = Read-EnvFile $envPath
-# dg_github_token is the data-governance GitHub token: a process/user environment variable, or a .env line.
-$githubToken = Setting 'dg_github_token' $localValues
+# PAT_CODE is the data-governance GitHub token: a process/user environment variable, or a .env line.
+$githubToken = Setting 'PAT_CODE' $localValues
 if (-not $githubToken) { $githubToken = Setting 'B2B_GITHUB_TOKEN' $localValues }   # legacy name from earlier installs
 $githubHeaders = @{ 'User-Agent'='B2B-Local-Data-Setup'; 'Accept'='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
 if ($githubToken) { $githubHeaders['Authorization'] = "Bearer $githubToken" }
@@ -63,7 +63,7 @@ function Download-File([string]$Url, [string]$Path, [hashtable]$Headers) {
             Invoke-WebRequest -Uri $Url -OutFile $Path -Headers $Headers -UseBasicParsing -TimeoutSec 120
             return
         } catch {
-            if ($attempt -eq 3) { throw 'GitHub download failed. Check access and the dg_github_token token.' }
+            if ($attempt -eq 3) { throw 'GitHub download failed. Check access and the PAT_CODE token.' }
             Start-Sleep -Seconds 2
         }
     }
@@ -90,7 +90,7 @@ function Get-LockedArchive($Item, [string]$Tag) {
     if ($Offline) { throw "Offline mode: missing or invalid cached archive $($Item.filename)" }
     if (-not $script:releaseAssets) {
         try { $script:releaseAssets = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/tags/$Tag" -Headers $githubHeaders -TimeoutSec 30).assets }
-        catch { throw 'Portable GitHub release is unavailable. Check the dg_github_token token and that this release has been published.' }
+        catch { throw 'Portable GitHub release is unavailable. Check the PAT_CODE token and that this release has been published.' }
     }
     $asset = @($script:releaseAssets | Where-Object { $_.name -ceq $Item.filename -and $_.state -eq 'uploaded' })
     if ($asset.Count -ne 1 -or "$($asset[0].id)" -notmatch '^[0-9]+$') { throw "Portable release is missing $($Item.filename)." }
@@ -114,7 +114,7 @@ try {
         if ($Offline) { throw 'For offline setup, provide -LocalSource and a populated -DownloadCache.' }
         $encodedRef = [uri]::EscapeDataString($Ref)
         try { $commit = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/commits/${encodedRef}?cache=$installId" -Headers $githubHeaders -TimeoutSec 30).sha }
-        catch { throw 'Cannot read GitHub main/ref. For this private repository, provide the dg_github_token token as an environment variable or in the local .env.' }
+        catch { throw 'Cannot read GitHub main/ref. For this private repository, provide the PAT_CODE token as an environment variable or in the local .env.' }
         if ($commit -notmatch '^[a-f0-9]{40}$') { throw 'GitHub did not return an exact commit.' }
         Write-Host "Refreshing application from $Repository at $commit"
         $archive = Join-Path $DownloadCache "$commit-$installId.zip"

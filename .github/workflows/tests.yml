@@ -25,6 +25,6 @@ jobs:
         run: python run.py --self-test
       - name: Portable installation smoke test
         env:
-          dg_github_token: ${{ github.token }}
+          PAT_CODE: ${{ github.token }}
         shell: pwsh
         run: .\tests\portable_install.ps1
