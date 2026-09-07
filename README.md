@@ -10,7 +10,7 @@ The canonical 30-column schema, normalization, amount formulas, stage mappings, 
 
 ## Install and start on Windows
 
-Only `setup.ps1` is needed on the work PC: save it in an empty install folder and run it. It downloads everything else from this private repository with a GitHub token that has **Contents: read** access. The installer uses the `PAT_Code` environment variable that data governance already provides on work PCs; `B2B_GITHUB_TOKEN` in `.env` or the process environment is an alternative and takes precedence when set. Keep the install folder between updates. SQL and Qwen settings can be filled in when ready; the defaults use fictional demo data.
+Only `setup.ps1` is needed on the work PC: save it in an empty install folder and run it. It downloads everything else from this private repository with the `dg_github_token` GitHub token that data governance provides on work PCs (a token with **Contents: read** access). The installer reads `dg_github_token` from the environment, or from a `dg_github_token=` line in `.env` when the variable is absent. Keep the install folder between updates. SQL and Qwen settings can be filled in when ready; the defaults use fictional demo data.
 
 Run from that folder:
 
@@ -47,11 +47,11 @@ For development, use the installed portable interpreter with this checkout's `ru
 
 Edit `.env` **in the install folder**, not in a versioned release. Environment variables override file settings. Values are literal, optionally quoted; no shell expansion occurs. The file is ordinary local text, ignored by Git, and should use your normal Windows file permissions.
 
-The supplied replication manual explicitly included `.env` configuration and the `PGURL`, `RO_SQL_USER`, `RO_SQL_PW`, `LLM_API_URL`, `LLM_API_KEY`, and `LLM_MODEL_NAME` names used below. It also included the `B2B_DATA_DIR`, `B2B_INSTALL_ROOT`, and identity-header settings. `B2B_GITHUB_TOKEN` (or the `PAT_Code` environment variable) is used by this private-repository installer only and is never sent to SQL or Qwen.
+The supplied replication manual explicitly included `.env` configuration and the `PGURL`, `RO_SQL_USER`, `RO_SQL_PW`, `LLM_API_URL`, `LLM_API_KEY`, and `LLM_MODEL_NAME` names used below. It also included the `B2B_DATA_DIR`, `B2B_INSTALL_ROOT`, and identity-header settings. `dg_github_token` is used by this private-repository installer only and is never sent to SQL or Qwen (the earlier `B2B_GITHUB_TOKEN` name is still accepted from old `.env` files).
 
 ```dotenv
-# Optional when the PAT_Code environment variable is present.
-B2B_GITHUB_TOKEN=
+# Only if dg_github_token is not already an environment variable.
+dg_github_token=
 PGURL=your-postgres-host:5432/postgres
 RO_SQL_USER=your-read-only-user
 RO_SQL_PW=your-password

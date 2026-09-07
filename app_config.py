@@ -31,7 +31,7 @@ def read_env(path):
             continue
         key, sep, value = line.partition('=')
         key, value = key.strip(), value.strip()
-        if not sep or not re.fullmatch(r'[A-Z][A-Z0-9_]*', key):
+        if not sep or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key):
             raise AppError(f'Invalid .env entry at line {index}.')
         if len(value) >= 2 and value[0] in '\"\'' and value[-1] == value[0]:
             value = value[1:-1]
