@@ -129,6 +129,8 @@ Stage filters expand the canonical groups:
 
 Use `stage_group` for grouped reporting. `context_action=refine` retains omitted settings, replaces existing filters on the same field, and honors `remove_filters`. Explicit empty lists clear dimensions/measures/sort; `replace` starts a fresh query. The server owns the active plan, so the browser cannot substitute its own conversation context. A clarification does not erase the last completed query.
 
+Greetings, small talk, and questions outside the opportunity data are answered as clarifications: the planner is instructed to return `intent: clarify` with example questions as suggestions, and a model reply that contains no JSON object at all is shown as the model's own words (trimmed to 300 characters) instead of a parse error. A reply that contains malformed or off-contract JSON still stops the request with the validation problem named.
+
 Arbitrary SQL, Python, expressions, and script paths are not execution options. This limits what a model plan can do; it does not guarantee that a model will interpret every business question correctly. Representative work questions and expected results remain the next evaluation input.
 
 Edit `business_rules.md` for local vocabulary supplements. The engine's canonical formulas remain fixed. The v0.1 example `schema.json`, if present, is preserved but no longer used; the supplied Salesforce schema supersedes it. Review any old example business-rule prose when upgrading.

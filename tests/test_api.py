@@ -168,7 +168,7 @@ class PlannerProtocolTests(unittest.TestCase):
                 self.assertEqual(captured[-1][0],suffix)
                 prompt=json.dumps(captured[-1][1])
                 self.assertNotIn('db-secret',prompt);self.assertNotIn('model-secret',prompt)
-                for word in ('deal_size','first_channel','deal_size_on_pricing_date_usd','once per opportunity'):self.assertIn(word,prompt)
+                for word in ('deal_size','first_channel','deal_size_on_pricing_date_usd','once per opportunity','exactly one JSON object','Greetings, small talk'):self.assertIn(word,prompt)
                 if provider=='openai_compatible':
                     self.assertEqual(set(captured[-1][1]),{'model','messages','stream','temperature','max_tokens'});self.assertTrue(captured[-1][1]['stream'])
         finally:server.shutdown();server.server_close();worker.join()
@@ -281,6 +281,22 @@ class PlannerFailureTests(unittest.TestCase):
         try:
             plan=PlannerClient(self.settings(server.server_address[1])).plan('Show won deals',[])
             self.assertEqual(plan.filters[0].value,'Won');self.assertEqual(len(seen),2);self.assertNotIn('temperature',seen[1]);self.assertTrue(seen[1]['stream'])
+        finally:server.shutdown();server.server_close();worker.join()
+    def test_prose_reply_becomes_a_clarification(self):
+        replies=iter(["Hello! I'm ready to help you query your Salesforce opportunity data.\n\nWhat would you like to look at? Here are a few examples:\n* \"Show me a summary of all open opportunities.\"\n* \"What are the top opportunities by amount?\"\n* \"Break down open deals by stage or owner.\"\nJust ask and I will translate it into a plan for you right away, whenever you are ready to begin exploring the data together.",
+                      "<think>a greeting, not a question</think>I'm ready when you are. What would you like to explore?"])
+        class Stub(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers['Content-Length']))
+                data=json.dumps({'choices':[{'message':{'content':next(replies)}}]}).encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        server,worker=self.serve(Stub)
+        try:
+            client=PlannerClient(self.settings(server.server_address[1]))
+            plan=client.plan('hey',[])
+            self.assertEqual(plan.intent.value,'clarify');self.assertTrue(plan.clarification.startswith("Hello! I'm ready to help"));self.assertLessEqual(len(plan.clarification),300);self.assertNotIn('\n',plan.clarification);self.assertNotIn('* ',plan.clarification)
+            plan=client.plan('yeheyhey',[])
+            self.assertEqual((plan.intent.value,plan.clarification),('clarify',"I'm ready when you are. What would you like to explore?"))
         finally:server.shutdown();server.server_close();worker.join()
     def test_invalid_plan_names_the_problem(self):
         class Stub(BaseHTTPRequestHandler):

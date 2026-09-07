@@ -3,7 +3,7 @@ import unittest
 
 from app_config import AppError
 from data_layer import build_canonical_views,demo_rows
-from query_engine import QUERY_FIELDS,QueryExecutor,merge_plan,parse_plan
+from query_engine import QUERY_FIELDS,QueryExecutor,clarification_text,merge_plan,parse_plan,plan_from_reply
 from query_models import Measure
 from query_service import describe_result
 
@@ -79,6 +79,19 @@ class QueryEngineTests(unittest.TestCase):
         self.assertEqual(merge_plan(previous,question).intent.value,'clarify')
         self.assertEqual(previous.limit,5)
 
+    def test_prose_reply_is_a_clarification_but_json_must_be_a_plan(self):
+        plan=plan_from_reply('<think>greeting</think>Hi! What would you like to see?\n- open deals\n- top owners')
+        self.assertEqual((plan.intent.value,plan.clarification,plan.suggestions),('clarify','Hi! What would you like to see? open deals top owners',[]))
+        self.assertEqual(plan_from_reply('Sure: ```json\n{"intent":"table","limit":3}\n```').limit,3)
+        for reply in ('{"intent":"dance"}','Here you go {"limit": "ten"}','','<think>only thoughts</think>'):
+            with self.subTest(reply=reply),self.assertRaises(AppError):plan_from_reply(reply)
+    def test_clarification_text_is_trimmed_at_a_boundary(self):
+        self.assertEqual(clarification_text('  one\n\n* two  three '),'one two three')
+        sentence=('Ask me about open deals. '*20).strip()
+        self.assertTrue(clarification_text(sentence).endswith('deals.'));self.assertLessEqual(len(clarification_text(sentence)),300)
+        words=' '.join(['opportunity']*40)
+        self.assertTrue(clarification_text(words).endswith('opportunity\u2026'));self.assertLessEqual(len(clarification_text(words)),300)
+        self.assertEqual(len(clarification_text('x'*400)),300)
     def test_malicious_text_stays_literal(self):
         self.assertEqual(self.execute(filters=[{'field':'opportunity_name','operator':'eq','value':"__import__('os').system('anything')"}])['total_rows'],0)
         for payload in [{'sql':'DROP TABLE x'},{'version':2},{'limit':True},{'filters':[{'field':'stage','operator':'in','value':[]}]},{'filters':[{'field':'stage','operator':'between','value':['Won']}]},{'intent':'clarify'}]:
