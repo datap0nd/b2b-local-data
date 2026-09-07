@@ -2,6 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -51,5 +53,8 @@ class ReleaseTests(unittest.TestCase):
         rollback(self.root)
         self.assertEqual(json.loads((self.root/'current.json').read_text()),pointer)
         self.assertEqual((self.root/'.env').read_text(),'sentinel')
+        command=subprocess.run([sys.executable,str(ROOT/'updater.py'),'--home',str(self.root)],cwd=self.root,capture_output=True,text=True)
+        self.assertEqual(command.returncode,0,command.stderr)
+        self.assertIn('Selected commit: previous',command.stdout)
         (self.root/'previous.json').write_text(json.dumps(pointer|{'release':str(self.root.parent)}))
         with self.assertRaises(AppError):rollback(self.root)

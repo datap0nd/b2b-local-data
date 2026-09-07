@@ -3,8 +3,10 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 import uuid
 
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from app_config import AppError
 
 
