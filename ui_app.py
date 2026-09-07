@@ -57,6 +57,8 @@ class SampleRequest(BaseModel):
 class RunRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
     only_failed_from: str | None=Field(default=None,min_length=32,max_length=32,pattern='^[0-9a-f]{32}$')
+    # Replay a retained snapshot of an earlier run for diagnosis; replay runs never qualify for delivery.
+    replay_from: str | None=Field(default=None,min_length=32,max_length=32,pattern='^[0-9a-f]{32}$')
 
 
 class StepRequest(BaseModel):
@@ -259,6 +261,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     def status(request:Request):
         kind=settings.get('DB_KIND','demo')
         return {'version':APP_VERSION,'database':kind,'source':settings.source_label,'previews':kind in ('demo','csv'),'name':display_name(request.state.owner),
+                'stream':settings.flag('B2B_LLM_STREAM',True) if settings.get('AI_PROVIDER','openai_compatible')=='openai_compatible' else False,
                 'model':settings.get('LLM_MODEL_NAME') or settings.get('AI_MODEL') or 'Not configured',
                 'model_source':settings.source_of('LLM_MODEL_NAME') if hasattr(settings,'source_of') else 'default','endpoint_source':settings.source_of('LLM_API_URL') if hasattr(settings,'source_of') else 'default',
                 'cache_seconds':app.state.snapshots.seconds,'snapshot_at':app.state.snapshots.loaded_at,
@@ -347,7 +350,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     @app.post('/api/test/runs')
     def test_start(request:Request,payload:RunRequest):
         app.state.store.log_activity(request.state.owner,request.state.ip,'test',None,'acceptance run started')
-        return app.state.acceptance.start(request.state.owner,payload.only_failed_from)
+        return app.state.acceptance.start(request.state.owner,payload.only_failed_from,replay_from=payload.replay_from)
 
     @app.get('/api/test/runs/{run_id}')
     def test_run(request:Request,run_id:str):

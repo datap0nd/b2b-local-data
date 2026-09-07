@@ -129,22 +129,20 @@ function recording(ctx, ops) {
 
 class ResultView {
   // One rendered result: heading, filters, metric cards, chart, table, details, follow-ups.
-  // Plain mode (the acceptance panel) shows every column with raw text so the suite can compare cell by cell.
+  // The acceptance panel renders through this same class with the same options and handlers as ordinary answers.
   constructor(root) {
-    this.root = root; this.plain = root.dataset.plain === 'true'; this.table = null; this.sortState = {}; this.plot = null; this.ops = null; this.recordOps = false;
+    this.root = root; this.table = null; this.sortState = {}; this.plot = null; this.ops = null; this.recordOps = false;
     this.visible = []; this.chartRows = []; this.currency = {mode: 'none'}; this.options = {};
     this.q = selector => root.querySelector(selector);
     this.q('.chart-measure').addEventListener('change', () => this.drawChart());
     this.q('.export').addEventListener('click', () => this.export());
     this.onResize = () => requestAnimationFrame(() => this.drawChart()); window.addEventListener('resize', this.onResize);
     const canvas = this.q('.chart'); canvas.addEventListener('pointermove', event => this.hover(event)); canvas.addEventListener('pointerleave', () => this.hideTip());
-    if (this.plain) { this.q('.columns-menu').hidden = true; this.q('.result-question').hidden = true; }
   }
   destroy() { window.removeEventListener('resize', this.onResize); }
   clear() { this.root.hidden = true; this.table = null; this.plot = null; }
   typeOf(column) { return (this.table && this.table.column_types && this.table.column_types[column]) || (MEASURES.has(column) ? 'number' : 'text'); }
   headerLabel(column) {
-    if (this.plain) return column.replaceAll('_', ' ');
     let text = label(column);
     if (MONEY.has(column)) text += USD.has(column) ? ' (USD)' : this.currency.mode === 'uniform' ? ` (${this.currency.code})` : '';
     return text;
@@ -152,7 +150,7 @@ class ResultView {
   hiddenColumns() { const merged = this.visible.map(c => MERGE[c]).filter(partner => partner && this.table.columns.includes(partner) && !this.visible.includes(partner)); return this.table.columns.filter(c => !this.visible.includes(c) && !merged.includes(c)); }
   defaultColumns() {
     const table = this.table, plan = this.options.plan;
-    if (this.plain || table.intent !== 'table' || (plan && plan.dimensions && plan.dimensions.length)) return table.columns.slice();
+    if (table.intent !== 'table' || (plan && plan.dimensions && plan.dimensions.length)) return table.columns.slice();
     const compact = (COMPACT[table.grain] || []).filter(c => table.columns.includes(c));
     (plan && plan.measures ? plan.measures : []).forEach(m => { if (table.columns.includes(m) && !compact.includes(m)) compact.push(m); });
     return compact.length >= 2 ? compact : table.columns.slice();
@@ -174,7 +172,6 @@ class ResultView {
     return [String(value), WRAP_FIELDS.has(column) ? 'wrap' : ''];
   }
   fillCell(cell, column, record) {
-    if (this.plain) { cell.textContent = record[column] ?? '—'; return; }
     const partner = MERGE[column];
     if (partner && this.table.columns.includes(partner) && !this.visible.includes(partner)) {
       const wrap = node('div', 'id-cell'); const [content, cls] = this.cellNode(column, record[column], record);
@@ -186,12 +183,12 @@ class ResultView {
   }
   drawRows() {
     const body = this.q('.table').tBodies[0]; body.replaceChildren();
-    const hidden = this.plain ? [] : this.hiddenColumns();
+    const hidden = this.hiddenColumns();
     this.table.rows.forEach(record => {
-      const row = body.insertRow(); if (!this.plain && record.has_quality_warning === true) row.classList.add('flagged');
+      const row = body.insertRow(); if (record.has_quality_warning === true) row.classList.add('flagged');
       this.visible.forEach((column, index) => {
-        const cell = row.insertCell(); if (!this.plain && index === 0) cell.classList.add('pin');
-        if (!this.plain && index === 0 && hidden.length) {
+        const cell = row.insertCell(); if (index === 0) cell.classList.add('pin');
+        if (index === 0 && hidden.length) {
           const toggle = button('row-toggle', '', 'i-chevron'); toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-label', 'Show all fields for this row');
           toggle.addEventListener('click', () => this.toggleDetails(row, toggle, record)); cell.append(toggle);
         }
@@ -212,7 +209,7 @@ class ResultView {
     const table = this.q('.table'); if (table.tHead) table.tHead.remove(); const head = table.createTHead().insertRow();
     this.visible.forEach((column, index) => {
       const th = document.createElement('th'); th.scope = 'col'; th.dataset.column = column;
-      if (!this.plain) { if (index === 0) th.classList.add('pin'); if (this.typeOf(column) === 'number' && !MERGE[column]) th.classList.add('num'); }
+      if (index === 0) th.classList.add('pin'); if (this.typeOf(column) === 'number' && !MERGE[column]) th.classList.add('num');
       const control = node('button', 'column-sort', this.headerLabel(column) + ' ↕'); control.type = 'button'; control.title = 'Sort displayed rows';
       control.addEventListener('click', () => this.sortBy(column)); th.append(control); head.append(th);
       if (this.sortState[column]) { th.setAttribute('aria-sort', this.sortState[column] === 1 ? 'ascending' : 'descending'); control.textContent = this.headerLabel(column) + (this.sortState[column] === 1 ? ' ↑' : ' ↓'); }
@@ -220,7 +217,7 @@ class ResultView {
     if (!table.tBodies.length) table.createTBody();
   }
   drawColumnsMenu() {
-    const list = this.q('.columns-list'); list.replaceChildren(); if (this.plain) return;
+    const list = this.q('.columns-list'); list.replaceChildren();
     this.table.columns.forEach(column => {
       const item = node('label'); const box = document.createElement('input'); box.type = 'checkbox'; box.checked = this.visible.includes(column);
       box.addEventListener('change', () => {
@@ -246,14 +243,14 @@ class ResultView {
     const filters = q('.filters'); filters.replaceChildren(); (table.filters || []).forEach(f => filters.append(filterChip(f, table.column_types || {})));
     q('.warnings').replaceChildren(); (table.warnings || []).forEach(text => q('.warnings').append(node('p', 'warning', text)));
     q('.stale').hidden = true; q('.stale').replaceChildren();
-    q('.export-label').textContent = this.plain ? 'CSV' : `Export displayed rows (${table.truncated ? `${shown.toLocaleString()} of ${total.toLocaleString()}` : shown.toLocaleString()})`;
+    q('.export-label').textContent = `Export displayed rows (${table.truncated ? `${shown.toLocaleString()} of ${total.toLocaleString()}` : shown.toLocaleString()})`;
     // Metric cards for an ungrouped metric; otherwise the table (and chart) carry the answer.
-    const metrics = q('.metrics'); metrics.replaceChildren(); metrics.hidden = !(ungrouped && !this.plain && table.rows.length);
+    const metrics = q('.metrics'); metrics.replaceChildren(); metrics.hidden = !(ungrouped && table.rows.length);
     if (!metrics.hidden) measures.forEach(name => { const card = node('div', 'metric'); card.append(node('div', 'metric-label', MEASURE_LABELS[name] || label(name))); const value = node('div', 'metric-value', formatNumber(table.rows[0][name], MONEY.has(name) ? 2 : null)); const code = this.measureUnit(name); if (code) value.append(node('span', 'metric-unit', code)); card.append(value); metrics.append(card); });
     q('.table').replaceChildren(); this.drawHead(); this.drawRows(); this.drawColumnsMenu();
     q('.table-wrap').hidden = !metrics.hidden || total === 0;
     // Empty state: keep the filters visible and offer to edit the question.
-    const empty = q('.empty-result'); empty.replaceChildren(); empty.hidden = total !== 0 || this.plain;
+    const empty = q('.empty-result'); empty.replaceChildren(); empty.hidden = total !== 0;
     if (!empty.hidden) { empty.append(node('h3', '', 'No results match this question')); const chips = node('div', 'filters'); (table.filters || []).forEach(f => chips.append(filterChip(f, table.column_types || {}))); if (chips.children.length) empty.append(chips); else empty.append(node('p', '', 'No filters were applied; the data source returned no rows.'));
       if (options.onEdit) { const edit = button('ghost small', 'Edit question'); edit.addEventListener('click', () => options.onEdit(options.question || '')); empty.append(edit); } }
     // Query details: technical scope stays available without competing with the answer.
@@ -262,14 +259,14 @@ class ResultView {
       .forEach(([term, value]) => { if (value == null || value === '') return; facts.append(node('dt', '', term)); facts.append(node('dd', '', String(value))); });
     q('.filters-json').textContent = table.filters && table.filters.length ? JSON.stringify(table.filters, null, 2) : '';
     const follow = q('.followups'); follow.replaceChildren();
-    if (!this.plain && options.suggestions && options.suggestions.length) { follow.append(node('span', 'followups-label', 'Ask next')); options.suggestions.forEach(text => { const chip = node('button', 'chip', text); chip.type = 'button'; chip.addEventListener('click', () => options.onFollowup && options.onFollowup(text)); follow.append(chip); }); }
+    if (options.suggestions && options.suggestions.length) { follow.append(node('span', 'followups-label', 'Ask next')); options.suggestions.forEach(text => { const chip = node('button', 'chip', text); chip.type = 'button'; chip.addEventListener('click', () => options.onFollowup && options.onFollowup(text)); follow.append(chip); }); }
     // Chart above the table; its rows are frozen now so later table sorting never changes what the chart shows.
     q('.chart-panel').hidden = !table.chart || total === 0; q('.chart-measure').replaceChildren(); this.plot = null;
-    if (table.chart) { table.chart.measures.forEach(name => q('.chart-measure').add(new Option(this.plain ? name.replaceAll('_', ' ') : (MEASURE_LABELS[name] || label(name)), name))); q('.chart-measure-label').hidden = table.chart.type === 'scatter' || table.chart.measures.length < 2; if (this.root.isConnected) this.drawChart(); else requestAnimationFrame(() => this.drawChart()); }
+    if (table.chart) { table.chart.measures.forEach(name => q('.chart-measure').add(new Option(MEASURE_LABELS[name] || label(name), name))); q('.chart-measure-label').hidden = table.chart.type === 'scatter' || table.chart.measures.length < 2; if (this.root.isConnected) this.drawChart(); else requestAnimationFrame(() => this.drawChart()); }
   }
   measureUnit(name) { if (!MONEY.has(name)) return ''; if (USD.has(name)) return 'USD'; return this.currency.mode === 'uniform' ? this.currency.code : ''; }
   formatMeasure(name, value) { if (value == null) return '—'; const text = MEASURES.has(name) || this.typeOf(name) === 'number' ? formatNumber(value, MONEY.has(name) ? 2 : null) : String(value); const unit = this.measureUnit(name); return unit ? `${text} ${unit}` : text; }
-  axisLabel(dimension, value) { if (value == null) return 'Unknown'; if (this.plain) return String(value); const type = this.typeOf(dimension); return type === 'date' ? formatDate(value, MONTH_FIELDS.has(dimension)) : type === 'bool' ? (value ? 'Yes' : 'No') : String(value); }
+  axisLabel(dimension, value) { if (value == null) return 'Unknown'; const type = this.typeOf(dimension); return type === 'date' ? formatDate(value, MONTH_FIELDS.has(dimension)) : type === 'bool' ? (value ? 'Yes' : 'No') : String(value); }
   markStale(text, action) { const box = this.q('.stale'); box.replaceChildren(); box.classList.remove('error'); box.append(node('span', '', text)); if (action) { const run = button('primary small', action.label); run.addEventListener('click', action.run); box.append(run); } box.hidden = false; }
   markRefreshFailed(text) { const box = this.q('.stale'); box.replaceChildren(); box.classList.add('error'); box.append(node('span', '', text)); box.hidden = false; }
   sortBy(name) {
@@ -277,8 +274,8 @@ class ResultView {
     const head = this.q('.table').tHead.rows[0];
     head.querySelectorAll('th').forEach(cell => { cell.removeAttribute('aria-sort'); const control = cell.querySelector('button'); control.textContent = this.headerLabel(cell.dataset.column) + ' ↕'; });
     const th = [...head.cells].find(cell => cell.dataset.column === name); th.setAttribute('aria-sort', direction === 1 ? 'ascending' : 'descending'); th.querySelector('button').textContent = this.headerLabel(name) + (direction === 1 ? ' ↑' : ' ↓');
+    // Sorting reorders displayed rows only; the chart keeps its frozen rows.
     table.rows.sort((a, b) => a[name] == null || b[name] == null ? compareValues(a[name], b[name], this.typeOf(name)) : direction * compareValues(a[name], b[name], this.typeOf(name))); this.drawRows();
-    if (this.plain) this.drawChart();
   }
   sortColumn(name, direction) {
     // Programmatic sort used by the acceptance checks: same code path as a header click.
@@ -297,22 +294,20 @@ class ResultView {
   }
   drawChart() {
     const table = this.table; if (!table?.chart || this.root.hidden || !this.root.isConnected) return;
-    const spec = table.chart, canvas = this.q('.chart'), rows = this.plain ? table.rows.slice(0, CHART.maxGroups) : this.chartRows;
+    const spec = table.chart, canvas = this.q('.chart'), rows = this.chartRows;
     const width = Math.max(CHART.minWidth, canvas.parentElement.clientWidth), measure = this.q('.chart-measure').value, dimension = spec.dimensions[0], scatter = spec.type === 'scatter';
     const limited = table.rows.length > CHART.maxGroups;
     let plot, ops;
-    if (!this.plain && spec.type === 'bar') ({plot, ops} = this.drawBars(canvas, rows, width, measure, dimension));
+    if (spec.type === 'bar') ({plot, ops} = this.drawBars(canvas, rows, width, measure, dimension));
     else ({plot, ops} = this.drawVertical(canvas, rows, width, measure, dimension, scatter, spec));
     plot.displayed = rows.length; plot.limited = limited;
-    const rawName = scatter ? spec.measures.join(' vs ') : measure + ' by ' + dimension;
-    const caption = this.plain ? `${rawName} · ${rows.length} displayed groups${limited ? ` (chart limited to first ${CHART.maxGroups}; table contains the rest)` : ''}. Exact values are in the table.`
-      : `${scatter ? spec.measures.map(m => MEASURE_LABELS[m] || label(m)).join(' versus ') : `${MEASURE_LABELS[measure] || label(measure)} by ${label(dimension)}`} · ${rows.length.toLocaleString()} ${rows.length === 1 ? 'group' : 'groups'} shown. Exact values are in the table below.`;
+    const caption = `${scatter ? spec.measures.map(m => MEASURE_LABELS[m] || label(m)).join(' versus ') : `${MEASURE_LABELS[measure] || label(measure)} by ${label(dimension)}`} · ${rows.length.toLocaleString()} ${rows.length === 1 ? 'group' : 'groups'} shown. Exact values are in the table below.`;
     this.q('.chart-caption').textContent = caption; canvas.setAttribute('aria-label', caption);
     const limit = this.q('.chart-limit'); limit.hidden = !limited; limit.textContent = limited ? `Chart limited to the first ${CHART.maxGroups} of ${table.rows.length.toLocaleString()} groups; the table contains the rest.` : '';
     plot.caption = caption; this.plot = plot; this.ops = this.recordOps ? ops : null;
   }
   drawVertical(canvas, rows, width, measure, dimension, scatter, spec) {
-    // Vertical bars (plain mode), lines, areas, and scatter plots share the legacy layout constants.
+    // Lines, areas, and scatter plots share the layout constants.
     const height = CHART.height, {ctx, ops} = this.prepareCanvas(canvas, width, height);
     const {left, right, top, bottom} = CHART, w = width - left - right, h = height - top - bottom;
     ctx.clearRect(0, 0, width, height); ctx.font = '11px Segoe UI, system-ui, sans-serif'; ctx.fillStyle = PALETTE.muted; ctx.strokeStyle = PALETTE.grid; ctx.lineWidth = 1;
@@ -326,7 +321,7 @@ class ResultView {
       const xs = rows.map(r => r[spec.measures[0]] == null ? null : Number(r[spec.measures[0]])), finite = xs.filter(value => value != null && Number.isFinite(value)); let lo = finite.length ? Math.min(...finite) : 0, hi = finite.length ? Math.max(...finite) : 1; if (lo === hi) hi = lo + 1;
       plot.scatter = {lo, hi, xMeasure: spec.measures[0], points: []};
       rows.forEach((row, i) => { if (row[spec.measures[0]] == null || row[spec.measures[1]] == null) return; const x = left + (xs[i] - lo) / (hi - lo) * w, py = y(Number(row[spec.measures[1]])); plot.scatter.points.push({x, y: py, xValue: row[spec.measures[0]], yValue: row[spec.measures[1]], label: this.axisLabel(dimension, row[dimension])}); ctx.beginPath(); ctx.arc(x, py, 5, 0, Math.PI * 2); ctx.fill(); });
-      ctx.fillStyle = PALETTE.muted; ctx.fillText((this.plain ? spec.measures[0] : (MEASURE_LABELS[spec.measures[0]] || label(spec.measures[0]))) + ': ' + (this.plain ? lo + ' → ' + hi : `${new Intl.NumberFormat().format(lo)} to ${new Intl.NumberFormat().format(hi)}`), left, height - 22);
+      ctx.fillStyle = PALETTE.muted; ctx.fillText((MEASURE_LABELS[spec.measures[0]] || label(spec.measures[0])) + ': ' + `${new Intl.NumberFormat().format(lo)} to ${new Intl.NumberFormat().format(hi)}`, left, height - 22);
     } else {
       const step = w / Math.max(1, rows.length), points = []; plot.step = step;
       rows.forEach((row, i) => { const x = left + step * (i + .5), value = row[measure], text = this.axisLabel(dimension, row[dimension]); ctx.save(); ctx.fillStyle = PALETTE.muted; ctx.translate(x, height - bottom + 15); ctx.rotate(-.35); ctx.fillText(text.slice(0, 20), -10, 0); ctx.restore();
@@ -367,7 +362,7 @@ class ResultView {
     ctx.restore(); return {plot, ops};
   }
   hover(event) {
-    const plot = this.plot; if (!plot || this.plain) return this.hideTip();
+    const plot = this.plot; if (!plot) return this.hideTip();
     const canvas = this.q('.chart'), rect = canvas.getBoundingClientRect(), px = event.clientX - rect.left, py = event.clientY - rect.top;
     let hit = null;
     if (plot.bars.length) hit = plot.bars.find(bar => px >= bar.x - 2 && px <= bar.x + bar.w + 2 && py >= bar.y - 2 && py <= bar.y + bar.h + 2);
@@ -554,7 +549,7 @@ $('refresh').addEventListener('click', async () => {
 });
 document.addEventListener('click', event => { document.querySelectorAll('.columns-menu[open]').forEach(menu => { if (!menu.contains(event.target)) menu.removeAttribute('open'); }); });
 window.B2B = {ResultView, csvText, compareValues, formatNumber, formatDate, api, CHART, showQualification, message};
-// The acceptance panel renders with the same template in plain mode.
+// The acceptance panel renders with the same template, renderer, and handlers as ordinary answers.
 $('test-result').append(...$('result-template').content.firstElementChild.cloneNode(true).children);
 
 function showFacts(status) {

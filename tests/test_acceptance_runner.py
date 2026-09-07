@@ -59,7 +59,7 @@ class RunnerTests(unittest.TestCase):
         failing = [(s['id'], s['status'], s.get('interpretation'), s.get('error')) for s in status['run']['steps'] if s['status'] != 'pass']
         self.assertEqual(failing, [])
         self.assertTrue(status['complete']); self.assertTrue(status['full_pass']); self.assertEqual(status['run']['status'], 'complete')
-        self.assertEqual(status['counts']['passed'], 54); self.assertEqual(status['counts']['browser_passed'], 12)
+        self.assertEqual(status['counts']['passed'], 54); self.assertEqual(status['counts']['browser_passed'], 16)
         self.assertEqual(self.repository.loads, 1)                              # one frozen snapshot for the whole run
         self.assertTrue(status['run']['snapshot']['canonical_parity'])
         self.assertEqual(len(set(planner.calls)), 54)
@@ -124,7 +124,7 @@ class RunnerTests(unittest.TestCase):
         runner, _ = self.runner()
         run_id = self.drive(runner, browser=None, stop_after=5)
         status = runner.cancel('alice', run_id)
-        self.assertEqual(status['run']['status'], 'cancelled'); self.assertEqual(status['counts']['blocked'], 49); self.assertEqual(status['counts']['browser_blocked'], 12)
+        self.assertEqual(status['run']['status'], 'cancelled'); self.assertEqual(status['counts']['blocked'], 49); self.assertEqual(status['counts']['browser_blocked'], 16)
         with self.assertRaises(AppError): runner.step('alice', run_id, 5)
         report = runner.report('alice', run_id); self.assertIn('Cancelled by the user', report); self.assertIn('partial', report)
         runner2, _ = self.runner()
@@ -151,7 +151,7 @@ class RunnerTests(unittest.TestCase):
             self.drive(changed)
         self.assertEqual(changed.qualification('alice')['streak'], 1)
         failed = changed.start('alice', only_failed_from=changed.list_runs('alice')[0]['id'])
-        self.assertIn('failed-only', failed['run']['scope']); self.assertTrue(all(s['status'] == 'skipped' for s in failed['run']['steps']))
+        self.assertIn('failed-only', failed['run']['scope']); self.assertTrue(all(s['status'] == 'not_applicable' for s in failed['run']['steps']))
         changed.cancel('alice', failed['run']['id'])
     def test_wrong_browser_observation_and_blocked_coverage_prevent_full_pass(self):
         runner, _ = self.runner()
@@ -166,7 +166,7 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('Blocked coverage', runner.report('alice', run_id))
     def test_markdown_escaping_and_manifest(self):
         self.assertEqual(md('a|b`c\nd'), 'a\\|b\\`c d')
-        m = manifest(); self.assertEqual(len(m['steps']), 54); self.assertEqual(len(m['browser_checks']), 12); self.assertEqual(m['suite_version'], '1.0.0')
+        m = manifest(); self.assertEqual(len(m['steps']), 54); self.assertEqual(len(m['browser_checks']), 16); self.assertEqual(m['suite_version'], '1.1.0')
         self.records[0]['end_customer'] = 'Pipe | Customer'; self.repository = FrameRepository(self.records)
         runner, _ = self.runner(ScriptedPlanner(witnesses_for(self.records)))
         run_id = self.drive(runner, browser=None, stop_after=2)

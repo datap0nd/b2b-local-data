@@ -98,9 +98,9 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict('os.environ',{'AI_MODEL':'environment-alias'},clear=True):self.assertEqual(Settings.load(self.root).get('LLM_MODEL_NAME'),'environment-alias')
     def test_manifest_describes_canonical_data_schema(self):
         manifest=json.loads((self.root/'release_manifest.json').read_text())
-        self.assertEqual(manifest['app_version'],'0.5.0');self.assertEqual(manifest['data_schema_version'],2)
+        self.assertEqual(manifest['app_version'],'0.5.1');self.assertEqual(manifest['data_schema_version'],2)
         self.assertNotIn('database_schema_version',manifest)
-        self.assertEqual((ROOT/'VERSION').read_text().strip(),'0.5.0')
+        self.assertEqual((ROOT/'VERSION').read_text().strip(),'0.5.1')
     def test_csv_source_configuration(self):
         (self.root/'.env').write_text('DB_KIND=csv\nB2B_CSV_PATH=exports/salesforce.csv\n')
         with patch.dict('os.environ',{},clear=True):settings=Settings.load(self.root)

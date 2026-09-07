@@ -60,6 +60,7 @@ HEADER_ALIASES = {
     'comments': 'comment',
     'deal_size_on_pricing_date': 'deal_size_on_pricing_date_usd',
     'deal_size_usd': 'deal_size_on_pricing_date_usd',
+    'subsidiary_code': 'subsidiary_subsidiary_code',
 }
 TEXT_FIELDS = [name for name, kind in FIELD_KINDS.items() if kind == 'text']
 DATE_FIELDS = [name for name, kind in FIELD_KINDS.items() if kind == 'date']
@@ -83,6 +84,8 @@ STAGE_GROUPS = {'Won': ('Won', 'Rollout Started', 'Rollout Finished'), 'Open': (
 NUMERIC = re.compile(r'^[+-]?[0-9]+([.][0-9]+)?$')
 PROBABILITY = re.compile(r'^[0-9]+([.][0-9]+)?%?$')
 DAY_FIRST = re.compile(r'^([0-9]{1,2})/([0-9]{1,2})/([0-9]{4})$')
+# Typed date/timestamp columns arrive from PostgreSQL as ISO text (the loader casts every column to text).
+ISO_DATE = re.compile(r'^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[ T][0-9:.+-]*Z?)?$')
 
 
 def clean_text(value):
@@ -105,10 +108,14 @@ def clean_date(value):
         return value.date() if isinstance(value, datetime) else value
     value = clean_text(value)
     match = DAY_FIRST.fullmatch(value) if value else None
-    if not match:
-        return None
-    try:
+    if match:
         day, month, year = (int(part) for part in match.groups())
+    else:
+        match = ISO_DATE.fullmatch(value) if value else None
+        if not match:
+            return None
+        year, month, day = (int(part) for part in match.groups())
+    try:
         return date(year, month, day)
     except ValueError:
         return None
@@ -359,7 +366,9 @@ class DataRepository:
 
     def _read(self, connection, relation, mapping):
         cap = self._cap()
-        selected = ', '.join(f'{quoted_identifier(mapping[field])} AS {quoted_identifier(field)}' for field in RAW_COLUMNS)
+        # Every column is read as text so typed date, timestamp, and numeric columns reach the shared parser and the
+        # independent evaluator in exactly the same form (PostgreSQL renders numerics exactly and dates as ISO text).
+        selected = ', '.join(f'CAST({quoted_identifier(mapping[field])} AS text) AS {quoted_identifier(field)}' for field in RAW_COLUMNS)
         rows = connection.execute(text(f'SELECT {selected} FROM {quoted_relation(relation)} LIMIT :cap'), {'cap': cap + 1}).fetchall()
         if len(rows) > cap:
             raise AppError(f'The source exceeds {cap:,} rows. Increase MAX_SOURCE_ROWS before computing complete totals.')

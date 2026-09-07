@@ -1,11 +1,12 @@
 """Invented, deterministic source and a scripted planner that answers every suite prompt with the authored plan."""
 from datetime import date
 from decimal import Decimal
+import json
 import random
 
 from acceptance_suite import STEPS, STEP_INDEX, render_prompt
 from data_layer import RAW_COLUMNS
-from query_engine import parse_plan
+from query_engine import PlanRejected, parse_plan
 from reference_evaluator import STAGE_MEMBERS
 
 OWNERS=['Ann Ahl','Bo Berg','Cy Chen','Di Dorn','Ed Ekre','Fay Falk','Gil Gray','Hal Hurd','Ivy Iles','Jo Jung']
@@ -13,6 +14,15 @@ CUSTOMERS=['Northwind Traders','Southgate Foods','Eastbridge Labs','Westfield Mo
 PRODUCTS=['P-100','P-200','P-300','P-400','P-500','P-600']
 TYPES=['New Business','Existing Business','Renewal']
 STAGES=[s for members in STAGE_MEMBERS.values() for s in members]
+# Recognizable clarification wording for the suite's predicates (the scripted "model" answers like a good model would).
+CLARIFICATIONS={'T34':'Probability-weighted revenue is not available: there is no weighted calculation in this data contract. I can show the total amount by owner or the probability per opportunity instead.',
+                'C2':'A probability-weighted revenue is not supported here. I can give the ordinary total amount of those opportunities, or list their probabilities.',
+                'T35':'Do you mean the whole opportunities that contain this product (all their products counted), or only the product rows for it (its own quantity and amount)?',
+                'C4':'Should I count the entire opportunities containing that product, or only that product\'s own rows within the currency?',
+                'T36':'I cannot run SQL statements; questions are answered through the validated query contract. Describe what the query should return, for example the opportunities in a stage or the amount by owner.'}
+SUGGESTIONS={'T34':['Show the total amount by opportunity owner','Show the opportunities with a probability of at least 75%'],
+             'C2':['What is the total amount of those opportunities?'],'T35':['Show the whole opportunities containing the product','Show only the rows for the product'],
+             'C4':['Count only the product rows','Count the whole opportunities'],'T36':['Show every opportunity as a summary table']}
 
 
 def synthetic_records(seed=7,opportunities=60,years=None):
@@ -60,7 +70,8 @@ def authored_plan(step,witnesses):
             elif f['op'] in ('ge','gt','le','lt'): out.append({'field':f['field'],'operator':f['op'],'value':float(value) if isinstance(value,Decimal) else int(value)})
             else: out.append({'field':f['field'],'operator':f['op'],'value':value})
         return out
-    if e['intent']=='clarify': return {'intent':'clarify','clarification':'Which calculation or scope do you mean?','context_action':'refine' if step['conversation'] else 'replace'}
+    if e['intent']=='clarify':
+        return {'intent':'clarify','clarification':CLARIFICATIONS.get(sid,'Which calculation or scope do you mean?'),'suggestions':SUGGESTIONS.get(sid,[]),'context_action':'refine' if step['conversation'] else 'replace'}
     grain='opportunity_sku' if e['grain']=='sku' else 'opportunity'
     plan={'intent':e['intent'],'grain':grain,'filters':filters(e['filters'])}
     if e['intent']=='table':
@@ -82,16 +93,45 @@ def authored_plan(step,witnesses):
 
 
 class ScriptedPlanner:
-    """Answers each rendered prompt with a scripted plan; overrides let tests inject wrong or failing answers."""
-    def __init__(self,witnesses,overrides=None,fail_on=()):
-        self.witnesses=witnesses;self.overrides=overrides or {};self.fail_on=set(fail_on);self.calls=[]
+    """Answers each rendered prompt with a scripted plan; overrides let tests inject wrong or failing answers.
+
+    rejections={'T05': ['first invalid reply', ...]} makes the first generation(s) for a step return replies that are
+    not plans; the correction attempt then returns the scripted plan (or the next rejection if more are listed)."""
+    def __init__(self,witnesses,overrides=None,fail_on=(),rejections=None):
+        self.witnesses=witnesses;self.overrides=overrides or {};self.fail_on=set(fail_on);self.rejections={k:list(v) for k,v in (rejections or {}).items()}
+        self.calls=[];self.generations=[];self.corrections=[]
         self.prompts={render_prompt(s,witnesses):s for s in STEPS if all(k in witnesses for k in s['witnesses'])}
+    def prompt_digest(self,effective_date=None):return 'sha256:scripted-planner'
+    def scripted(self,step,view):
+        values=self.overrides.get(step['id'])
+        return values if values is not None else authored_plan(step,self.witnesses)
     def plan(self,question,history,previous=None,view='auto'):
         self.calls.append(question)
         step=self.prompts.get(question)
         if step is None: raise AssertionError('Unscripted prompt: '+question)
         if step['id'] in self.fail_on: raise RuntimeError('model unavailable')
-        values=self.overrides.get(step['id'])
-        plan=parse_plan(values if values is not None else authored_plan(step,self.witnesses))
+        plan=parse_plan(self.scripted(step,view))
         if view!='auto' and plan.intent.value!='clarify': plan.grain='opportunity' if view=='summary' else 'opportunity_sku'
         return plan
+    def generate(self,question,history,previous=None,view='auto',correction=None,effective_date=None):
+        self.calls.append(question)
+        step=self.prompts.get(question)
+        if step is None: raise AssertionError('Unscripted prompt: '+question)
+        if step['id'] in self.fail_on: raise RuntimeError('model unavailable')
+        self.generations.append({'step':step['id'],'question':question,'history':list(history),'correction':correction,'effective_date':effective_date})
+        if correction is not None: self.corrections.append({'step':step['id'],'question':question,'history':list(history),'correction':correction})
+        outcome={'plan':None,'content':None,'error':None,'settings':{'provider':'scripted','model':'scripted','stream':False,'temperature':0,'max_tokens':0,'structured_output':'none'},
+                 'fallback_events':[],'seconds':0.0,'prompt_digest':self.prompt_digest(effective_date),'excerpt':None}
+        pending=self.rejections.get(step['id'])
+        if pending:
+            reply=pending.pop(0)
+            outcome['content']=reply;outcome['excerpt']=reply[:300]
+            try: parse_plan(reply)
+            except PlanRejected as rejected: outcome['error']=str(rejected);return outcome
+            outcome['plan']=parse_plan(reply);return outcome
+        values=self.scripted(step,view)
+        outcome['content']=json.dumps(values,default=str);outcome['excerpt']=outcome['content'][:300]
+        plan=parse_plan(values)
+        if view!='auto' and plan.intent.value!='clarify': plan.grain='opportunity' if view=='summary' else 'opportunity_sku'
+        outcome['plan']=plan
+        return outcome

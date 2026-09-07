@@ -75,7 +75,8 @@ class DataGrainTests(unittest.TestCase):
         self.assertEqual(clean_date('1/1/2026'),date(2026,1,1))
         self.assertEqual(clean_date(' 9/10/2026 '),date(2026,10,9))
         self.assertEqual(clean_date('09/1/2026'),date(2026,1,9))
-        for value in ['29/02/2025','31/04/2026','01/13/2026','01/01/0000','2026-01-01','bad','1/1/26','0/1/2026','1/0/2026','', None]:
+        self.assertEqual(clean_date('2026-01-01'),date(2026,1,1));self.assertEqual(clean_date('2026-01-01 00:00:00'),date(2026,1,1))   # ISO text from typed database columns
+        for value in ['29/02/2025','31/04/2026','01/13/2026','01/01/0000','2026-13-01','bad','1/1/26','0/1/2026','1/0/2026','', None]:
             self.assertIsNone(clean_date(value))
 
     def test_blank_business_keys_are_excluded(self):

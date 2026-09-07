@@ -66,7 +66,8 @@ class EvaluatorFixtureTests(unittest.TestCase):
         self.assertEqual(total['rows'],[{'amount':Decimal('385.75'),'deal_size':Decimal(1020)}])
     def test_dates_and_fingerprint(self):
         self.assertEqual(r_date('1/12/2022'),date(2022,12,1));self.assertEqual(r_date('29/02/2024'),date(2024,2,29))
-        for value in ['29/02/2023','31/04/2026','0/1/2026','1/1/26','2026-01-01',None,'']:self.assertIsNone(r_date(value))
+        for value in ['29/02/2023','31/04/2026','0/1/2026','1/1/26','2026-13-01',None,'']:self.assertIsNone(r_date(value))
+        self.assertEqual(r_date('2026-01-01'),date(2026,1,1))   # ISO text from typed database columns
         first=fingerprint(HAND_RECORDS);shuffled=fingerprint(list(reversed(HAND_RECORDS)))
         self.assertEqual(first,shuffled);self.assertTrue(first.startswith('fp1:'))
         self.assertNotEqual(first,fingerprint(HAND_RECORDS[:-1]));self.assertNotEqual(first,fingerprint(HAND_RECORDS+[HAND_RECORDS[0]]))

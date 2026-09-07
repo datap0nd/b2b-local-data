@@ -13,6 +13,7 @@
   <symbol id="i-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5L10.5 8 6 12.5"/></symbol>
   <symbol id="i-play" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.2v9.6L12.5 8z"/></symbol>
   <symbol id="i-trash" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5v-2h3v2M4.5 4.5l.6 9h5.8l.6-9"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></symbol>
 </svg>
 <header class="topbar">
   <div class="topbar-inner">
@@ -21,6 +22,7 @@
     <div class="topbar-actions">
       <button id="refresh" class="ghost data-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span>Refresh data</span></button>
       <button id="history-open" class="ghost" type="button" aria-controls="history" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg><span>History</span></button>
+      <button id="test-open" class="ghost" type="button" aria-controls="test-panel"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Test</span></button>
     </div>
   </div>
 </header>
@@ -60,7 +62,6 @@
     <div class="foot-row">
       <span class="me">Signed in as <strong id="me-name"></strong></span>
       <button id="change-name" class="link" type="button">Change name</button>
-      <button id="test-open" class="link" type="button">Run acceptance test</button>
       <span id="readiness" class="readiness" hidden></span>
     </div>
     <div id="status" class="status" role="status"></div>
@@ -113,10 +114,12 @@
 </template>
 <section id="test-panel" class="test-panel" hidden aria-label="Acceptance test">
   <div class="test-head"><div><h2>Acceptance test</h2><p id="test-suite" class="result-meta">Loading the suite…</p><p id="test-state" class="result-meta"></p></div>
-    <div class="test-controls"><button id="test-start" class="primary" type="button">Run all checks</button><button id="test-resume" class="quiet" type="button" hidden>Resume</button><button id="test-cancel" class="quiet" type="button" disabled>Cancel</button><button id="test-report" class="quiet" type="button" disabled>Download report</button><button id="test-compare" class="quiet" type="button" disabled>Compare previous run</button><button id="test-close" class="quiet" type="button">Close</button></div></div>
+    <div class="test-controls"><button id="test-start" class="primary" type="button">Run all checks</button><button id="test-resume" class="quiet" type="button" hidden>Resume</button><button id="test-cancel" class="quiet" type="button" disabled>Cancel</button><button id="test-report" class="quiet" type="button" disabled>Download report</button><button id="test-compare" class="quiet" type="button" disabled>Compare previous run</button><button id="test-synthetic" class="quiet" type="button">Run synthetic checks</button><button id="test-close" class="quiet" type="button">Close</button></div></div>
+  <p class="test-note">Live checks render each suite result through the production result view. Synthetic checks exercise conditions absent from live data (mixed currencies, more than 30 groups, empty results) with invented payloads; they are development evidence only and are never recorded as live coverage.</p>
   <div class="test-grid"><div><span class="eyebrow">CASE</span><p id="test-case">Not started</p></div><div><span class="eyebrow">ELAPSED</span><p id="test-elapsed">0 s</p></div><div><span class="eyebrow">PROGRESS</span><p id="test-progress">—</p></div></div>
   <div class="test-grid"><div><span class="eyebrow">PROMPT</span><p id="test-prompt" class="mono"></p></div><div><span class="eyebrow">QWEN ANSWER</span><p id="test-answer" class="mono"></p></div><div><span class="eyebrow">CHECKS</span><p id="test-checks"></p></div></div>
+  <div id="test-browser-log" class="test-log" aria-live="polite"></div>
   <pre id="test-comparison" class="mono" hidden></pre>
-  <article id="test-result" class="result-view plain" data-plain="true" hidden></article>
+  <article id="test-result" class="result-view" hidden></article>
 </section>
 </body></html>

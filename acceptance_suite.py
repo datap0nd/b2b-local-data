@@ -10,7 +10,7 @@ import re
 
 from reference_evaluator import STAGE_MEMBERS, r_number
 
-SUITE_VERSION = '1.0.0'
+SUITE_VERSION = '1.1.0'
 CURRENCY_FIELDS = ('opp_amount_converted_currency', 'amount_converted_currency')
 PRODUCT_FIELDS = {'product_code', 'pet_name', 'gscm_product_group_new', 'amount_converted_currency', 'sku_amount', 'exported_opp_amount_value_count'}
 # Contract default columns, copied from the published query contract.
@@ -54,14 +54,14 @@ STEPS = [
          table('sku', columns=['pet_name', 'quantity', 'sku_amount'], limit=20), view='detail', needs=('twenty_plus',),
          behavior='Exactly the selected columns plus both keys, first 20 rows by keys, complete count reported.'),
     step('T05', 'Overall totals', 'What are the total amount, the total quantity, the number of opportunities, and the number of opportunity/SKU rows across all data?',
-         metric(measures=ALL_MEASURES), needs=('single_currency',), behavior='One ungrouped row with all four measures over the complete source.'),
+         metric(measures=ALL_MEASURES), needs=('single_currency',), browser=(13,), behavior='One ungrouped row with all four measures over the complete source.'),
     step('T06', 'Totals by stage group', 'Show the total amount, total quantity, number of opportunities, and number of opportunity/SKU rows by stage group.',
          metric(group=['stage_group'], measures=ALL_MEASURES), needs=('single_currency',), behavior='One row per stage group (Won, Open, Lost, or none).'),
     step('T07', 'Opportunity counts by owner', 'How many opportunities does each opportunity owner have?', metric(group=['opportunity_owner'], measures=['opportunity_count']),
          behavior='Distinct opportunity counts per owner; a null owner forms its own group.'),
     step('T08', 'Amount by currency', 'Show the total amount by currency.', metric(group=['currency'], measures=['amount']),
          behavior='Amount grouped by the currency column of the chosen grain.'),
-    step('T09', 'Won filter', 'Show the Won opportunities.', table(filters=[F('stage', 'group', 'Won')]), view='summary', behavior='Stage group Won expands to Won, Rollout Started, and Rollout Finished.'),
+    step('T09', 'Won filter', 'Show the Won opportunities.', table(filters=[F('stage', 'group', 'Won')]), view='summary', browser=(15,), behavior='Stage group Won expands to Won, Rollout Started, and Rollout Finished.'),
     step('T10', 'Open filter', 'Show the Open opportunities.', table(filters=[F('stage', 'group', 'Open')]), view='summary', behavior='Stage group Open expands to Identified, Qualified, and Negotiation.'),
     step('T11', 'Lost filter', 'Show the Lost opportunities.', table(filters=[F('stage', 'group', 'Lost')]), view='summary', behavior='Stage group Lost expands to Dropped and Lost.'),
     step('T12', 'Exact owner', 'Show the opportunities owned by {owner_a}.', table(filters=[F('opportunity_owner', 'eq', '{owner_a}')]), view='summary', witnesses=('owner_a',),
@@ -92,7 +92,7 @@ STEPS = [
          behavior='One opportunity row whose amount is the sum of all its SKU amounts.'),
     step('T25', 'Ten largest opportunities', 'Show the 10 largest opportunities by total amount. Break ties by opportunity number.',
          table(sort=[('opportunity_amount', False), ('opportunity_no', True)], limit=10), view='summary', needs=('ten_plus',), behavior='Sort the complete set by amount descending then opportunity number, then keep 10.'),
-    step('T26', 'Nonexistent identifier', 'Show opportunity {nonexistent}.', table(filters=[F('opportunity_no', 'eq', '{nonexistent}')]), view='summary', witnesses=('nonexistent',),
+    step('T26', 'Nonexistent identifier', 'Show opportunity {nonexistent}.', table(filters=[F('opportunity_no', 'eq', '{nonexistent}')]), view='summary', witnesses=('nonexistent',), browser=(14,),
          behavior='A valid query with zero rows, not an error.'),
     step('T27', 'Bar chart by stage group', 'Create a bar chart of the total amount and total quantity by stage group.', chart('bar', group=['stage_group'], measures=['amount', 'quantity']), browser=(6, 10), needs=('single_currency',),
          behavior='Bar chart with one grouping dimension and two measures.'),
@@ -126,7 +126,7 @@ STEPS = [
     step('B5', 'Won product rows behind the result', 'Show the detailed Won product rows behind that result.', table('sku', filters=[F('opportunity_owner', 'eq', '{owner_c}'), F('stage', 'group', 'Won')]), view='detail', conversation='B', behavior='Drill-down keeps the owner and adds the Won stage group at SKU grain.'),
     step('B6', 'Fresh unrestricted summary', 'Start a new question: show a summary of all opportunities without any restriction.', table(), view='summary', conversation='B', behavior='A replace question clears the earlier filters.'),
     # Conversation C: clarification and recovery.
-    step('C1', 'Summary filtered to a currency', 'Show a summary of the opportunities in currency {currency}.', table(filters=[F('currency', 'eq', '{currency}')]), view='summary', conversation='C', witnesses=('currency',)),
+    step('C1', 'Summary filtered to a currency', 'Show a summary of the opportunities in currency {currency}.', table(filters=[F('currency', 'eq', '{currency}')]), view='summary', conversation='C', witnesses=('currency',), browser=(16,)),
     step('C2', 'Unsupported weighted revenue', 'What is the probability-weighted revenue of those opportunities?', CLARIFY, conversation='C', behavior='A clarification that leaves the currency plan active.'),
     step('C3', 'Clarify: ordinary revenue', 'I mean the ordinary, unweighted total amount of those opportunities.', metric(filters=[F('currency', 'eq', '{currency}')], measures=['amount']), conversation='C', behavior='Total amount with the currency filter retained.'),
     step('C4', 'Ambiguous product scope', 'And what is the value of product {product} there?', CLARIFY, conversation='C', witnesses=('product',), behavior='Product scope is ambiguous; a clarification is expected.'),
@@ -135,20 +135,72 @@ STEPS = [
 ]
 STEP_INDEX = {s['id']: i for i, s in enumerate(STEPS)}
 
+# Browser checks run against the production renderer (the same result view, options, formatting, and handlers
+# ordinary answers use); expected values are recomputed independently in the browser from the payload.
 BROWSER_CHECKS = [
-    {'id': 1, 'title': 'Summary table headers, rows, and cell text', 'step': 'T01'},
-    {'id': 2, 'title': 'Detail table headers, keys, and cell text', 'step': 'T02'},
-    {'id': 3, 'title': 'Ascending numeric sorting', 'step': 'T01'},
-    {'id': 4, 'title': 'Descending sorting with nulls last', 'step': 'T01'},
-    {'id': 5, 'title': 'Generated CSV content, escaping, and displayed-row scope', 'step': 'T02'},
-    {'id': 6, 'title': 'Bar positions and values', 'step': 'T27'},
-    {'id': 7, 'title': 'Line ordering and missing-value gaps', 'step': 'T28'},
-    {'id': 8, 'title': 'Area baseline and plotted values', 'step': 'T29'},
-    {'id': 9, 'title': 'Scatter axes and point coordinates', 'step': 'T30'},
+    {'id': 1, 'title': 'Compact summary table: visible columns, merged key cell, formatted values, hidden fields in row details', 'step': 'T01'},
+    {'id': 2, 'title': 'Compact detail table: visible columns, merged product cell, formatted values', 'step': 'T02'},
+    {'id': 3, 'title': 'Ascending numeric sort of displayed rows by header click', 'step': 'T01'},
+    {'id': 4, 'title': 'Descending sort with nulls last and column selection', 'step': 'T01'},
+    {'id': 5, 'title': 'CSV export through the export control: all returned columns, displayed rows in current order', 'step': 'T02'},
+    {'id': 6, 'title': 'Horizontal bars: order, proportional lengths, value labels, tooltip', 'step': 'T27'},
+    {'id': 7, 'title': 'Line chart: chronological order, missing-value gaps, tooltip', 'step': 'T28'},
+    {'id': 8, 'title': 'Area chart: baseline, fill, plotted values', 'step': 'T29'},
+    {'id': 9, 'title': 'Scatter chart: point coordinates and tooltip', 'step': 'T30'},
     {'id': 10, 'title': 'Chart-measure change without SQL or Qwen calls', 'step': 'T27'},
-    {'id': 11, 'title': '30-group chart limit and its explanation', 'step': 'T28'},
-    {'id': 12, 'title': 'Resize, finite coordinates, visible canvas, browser errors', 'step': 'T30'},
+    {'id': 11, 'title': '30-group chart limit disclosure and chart stability while the table is sorted', 'step': 'T28'},
+    {'id': 12, 'title': 'Redraw after a real resize event: finite coordinates, painted canvas, no browser errors', 'step': 'T30'},
+    {'id': 13, 'title': 'Metric cards for an ungrouped metric', 'step': 'T05'},
+    {'id': 14, 'title': 'Empty result state with its filter chips', 'step': 'T26'},
+    {'id': 15, 'title': 'Filter chips, stage badges, and warnings', 'step': 'T09'},
+    {'id': 16, 'title': 'Currency label from the currency filter', 'step': 'C1'},
 ]
+
+# Clarification meaning is checked with explicit predicates per case (accepted wording variants). A clarification
+# whose wording matches none of the variants is marked for review; it never passes automatically.
+UNSUPPORTED_TERMS = re.compile(r'\b(average|averages|mean|median|weighted|forecast|predict|prediction|growth|trend|trends|ratio|percentage of|percent of|share of|variance|deviation|moving|cumulative|run rate|coverage|conversion rate|win rate)\b', re.I)
+NEGATION = r"(?:not|cannot|can't|can not|unable|isn't|is not|aren't|don't|do not|doesn't|does not|won't|no|unsupported|beyond|outside)"
+CLARIFICATION_RULES = {
+    'unsupported_calculation': {
+        'steps': ('T34', 'C2'),
+        'must': [('the calculation is named', r'weight|probabilit'), ('it is declared unavailable', NEGATION + r'\b[^.]{0,80}?(?:support|available|possible|offer|provide|calculat|comput|weight|do|perform)|' + r'(?:support|available|possible|offer|provide|calculat|comput)[^.]{0,40}?' + NEGATION)],
+        'suggestions': 'supported'},
+    'ambiguous_product_scope': {
+        'steps': ('T35', 'C4'),
+        'must': [('whole-opportunity alternative', r'whole|entire|complete|full opportunit|all (?:of )?(?:its|their|the) (?:other )?products|opportunit(?:y|ies)[^.]{0,30}(?:total|level|value|amount)|containing'),
+                 ('product-rows-only alternative', r"only (?:the|that|those|its|this)? ?(?:product|row|line|sku)|product(?:'s)? own|matching (?:product|row|line|sku)|product (?:rows?|lines?|items?)|(?:sku|line[- ]item) (?:rows?|level|amount|total)|that product alone|itself|just (?:the|that) product")],
+        'suggestions': 'supported'},
+    'sql_request': {
+        'steps': ('T36',),
+        'must': [('SQL is named', r'\bsql\b|query|statement|select'), ('execution is declined', NEGATION + r'\b[^.]{0,60}?(?:run|execut|sql|quer|statement|support|possible|able)|(?:run|execut)[^.]{0,30}?' + NEGATION)],
+        'suggestions': 'supported'},
+}
+CLARIFICATION_RULE_BY_STEP = {step: (name, rule) for name, rule in CLARIFICATION_RULES.items() for step in rule['steps']}
+
+
+def check_clarification(step, outcome):
+    """Verdict for a step that expects a clarification: (status, problems).
+
+    pass: every required concept is present and every suggestion is supported; review: the wording matched no
+    accepted variant for at least one concept; fail: a suggestion names an unsupported calculation or SQL."""
+    text = ' '.join(str(outcome.get('question') or '').split())
+    suggestions = list(outcome.get('suggestions') or [])
+    problems = []
+    unsupported = [sug for sug in suggestions if UNSUPPORTED_TERMS.search(str(sug)) or re.search(r'\b(sql|python|script)\b', str(sug), re.I)]
+    if unsupported:
+        problems.append('unsupported suggestion(s): ' + '; '.join(str(sug) for sug in unsupported))
+    rule = CLARIFICATION_RULE_BY_STEP.get(step['id'])
+    if rule is None:
+        return ('pass' if not problems else 'fail'), problems
+    name, spec = rule
+    unmatched = [label for label, pattern in spec['must'] if not re.search(pattern, text, re.I)]
+    if unmatched:
+        problems.append(f"{name}: wording did not match an accepted variant for " + ', '.join(unmatched) + ' (review the clarification text)')
+    if not text:
+        problems.append('empty clarification')
+    if any(p.startswith('unsupported suggestion') for p in problems) or not text:
+        return 'fail', problems
+    return ('review' if unmatched else 'pass'), problems
 BLOCKED_BY_NEED = {'twenty_plus': 'fewer than 21 opportunities, so a 20-row limit cannot be exercised', 'ten_plus': 'fewer than 10 opportunities',
                    'single_currency': 'the source mixes currencies, so ungrouped amount totals are rejected by the contract',
                    'probability_high': 'no opportunity has a probability of at least 0.75', 'probability_null': 'every opportunity has a probability',

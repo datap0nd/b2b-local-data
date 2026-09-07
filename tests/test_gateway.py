@@ -41,8 +41,8 @@ class GatewayTests(unittest.TestCase):
         connection.execute.return_value.fetchall.side_effect=[[(name,) for name in SQL_COLUMNS.values()],[]]
         views=repo.load()
         select=self.statements(connection)[-1]
-        self.assertIn('"1st_channel" AS "first_channel"',select);self.assertIn('"deal_size_on_pricing_date_usd" AS "deal_size_on_pricing_date_usd"',select)
-        self.assertIn('FROM "bi_reporting"."b2b_project" LIMIT :cap',select);self.assertEqual(select.count(' AS '),30)
+        self.assertIn('CAST("1st_channel" AS text) AS "first_channel"',select);self.assertIn('CAST("deal_size_on_pricing_date_usd" AS text) AS "deal_size_on_pricing_date_usd"',select)
+        self.assertIn('FROM "bi_reporting"."b2b_project" LIMIT :cap',select);self.assertEqual(select.count('CAST('),30);self.assertEqual(select.count(') AS "'),30)
         self.assertTrue(views.opportunity.empty)
     def test_missing_source_columns_are_reported_before_reading(self):
         repo,connection=self.repository([c for c in SQL_COLUMNS.values() if c not in ('1st_channel','comment')])
