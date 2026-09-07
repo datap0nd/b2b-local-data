@@ -384,7 +384,9 @@ class DataRepository:
         except AppError:
             raise
         except Exception as error:
-            raise AppError(f'PostgreSQL read failed ({describe_database_error(error, self.settings)}). Check the read-only credentials, source schema, TLS (DB_SSL=true, prefer, or false), and connection timeout.') from None
+            detail = describe_database_error(error, self.settings)
+            hint = 'The server has no TLS: set DB_SSL=prefer or DB_SSL=false in .env.' if 'refuses ssl' in detail.lower() else 'Check the read-only credentials (RO_SQL_USER/RO_SQL_PW or PGUSER/PGPASSWORD), source schema, TLS (DB_SSL=prefer, true, or false), and connection timeout.'
+            raise AppError(f'PostgreSQL read failed ({detail}). {hint}') from None
         return raw, 'postgres', relation
 
     def load(self):

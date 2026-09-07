@@ -68,7 +68,9 @@ class GatewayTests(unittest.TestCase):
         repo,connection=self.repository(RO_SQL_PW='s3cret')
         with patch.object(repo,'_read',side_effect=DBAPIError('hidden',None,Exception({'S':'FATAL','C':'28P01','M':'password authentication failed for user "reader" s3cret'}),False)),self.assertRaises(AppError) as error:repo.load()
         self.assertIn('28P01',str(error.exception));self.assertIn('password authentication failed',str(error.exception));self.assertNotIn('s3cret',str(error.exception))
-        self.assertIn('DB_SSL=true, prefer, or false',str(error.exception))
+        self.assertIn('RO_SQL_USER/RO_SQL_PW',str(error.exception))
+        with patch.object(repo,'_read',side_effect=DBAPIError('hidden',None,Exception('Server refuses SSL'),False)),self.assertRaises(AppError) as error:repo.load()
+        self.assertIn('set DB_SSL=prefer or DB_SSL=false',str(error.exception))
     def test_prefer_mode_falls_back_to_plain_after_a_tls_failure(self):
         import ssl as ssl_module
         settings=Settings(Path('.'),{'DB_KIND':'postgres','PGURL':'db.example:5432/postgres','DB_SSL':'prefer'})
