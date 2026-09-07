@@ -48,17 +48,34 @@ class Settings:
     @classmethod
     def load(cls, home):
         home = Path(home).resolve()
-        aliases = {'RO_SQL_USER':'DB_USER', 'RO_SQL_PW':'DB_PASSWORD',
-                   'LLM_API_URL':'AI_BASE_URL', 'LLM_API_KEY':'AI_API_KEY', 'LLM_MODEL_NAME':'AI_MODEL'}
+        # Canonical names first, then the data-governance variables already present on work PCs
+        # (DG_AI_API_URL, DG_AI_API_KEY, DG_AI_MODEL, PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD),
+        # then the pre-0.3 names kept for existing installations.
+        aliases = {'RO_SQL_USER':('PGUSER','DB_USER'), 'RO_SQL_PW':('PGPASSWORD','DB_PASSWORD'),
+                   'LLM_API_URL':('DG_AI_API_URL','AI_BASE_URL'), 'LLM_API_KEY':('DG_AI_API_KEY','AI_API_KEY'), 'LLM_MODEL_NAME':('DG_AI_MODEL','AI_MODEL')}
         overrides = {}
+        derived_endpoint = False
         for layer in (read_env(home / '.env'), dict(os.environ)):
-            for canonical, old in aliases.items():
-                if canonical not in layer and old in layer:
-                    layer[canonical] = layer[old]
-            overrides.update(layer)
+            for canonical, olds in aliases.items():
+                if not layer.get(canonical):
+                    for old in olds:
+                        if layer.get(old):
+                            layer[canonical] = layer[old]
+                            derived_endpoint = derived_endpoint or (canonical == 'LLM_API_URL' and old == 'DG_AI_API_URL')
+                            break
+            if not layer.get('PGURL') and layer.get('PGHOST'):
+                layer['PGURL'] = f"{layer['PGHOST']}:{layer.get('PGPORT') or 5432}/{layer.get('PGDATABASE') or 'postgres'}"
+            overrides.update({k: v for k, v in layer.items() if v != '' or k not in overrides})
         values = read_env(ROOT / '.env.example') | overrides
         if 'LLM_API_URL' in overrides and 'AI_PROVIDER' not in overrides:
             values['AI_PROVIDER'] = 'openai_compatible'
+        if derived_endpoint and values.get('LLM_API_URL'):
+            # The data-governance endpoint is already trusted on this PC; allow its host without extra configuration.
+            host = urlsplit(values['LLM_API_URL'] if '://' in values['LLM_API_URL'] else 'http://' + values['LLM_API_URL']).hostname or ''
+            allowed = {h.strip() for h in values.get('B2B_LLM_ALLOWED_HOSTS', '').split(',') if h.strip()}
+            if host:
+                allowed.add(host)
+            values['B2B_LLM_ALLOWED_HOSTS'] = ','.join(sorted(allowed))
         if not values.get('DB_KIND'):
             values['DB_KIND'] = 'postgres' if values.get('PGURL') else 'demo'
         rules_path = home / 'business_rules.md'

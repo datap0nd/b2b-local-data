@@ -48,6 +48,18 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict('os.environ',{},clear=True):self.assertEqual(Settings.load(self.root).get('DG_GITHUB_TOKEN'),'abc')
         (self.root/'.env').write_text('1BAD=x\n')
         with self.assertRaises(AppError):read_env(self.root/'.env')
+    def test_data_governance_variables_configure_database_and_model(self):
+        environment={'PGHOST':'db.internal','PGUSER':'reader','PGPASSWORD':'pw','DG_AI_API_URL':'http://10.20.30.40:8000/v1','DG_AI_API_KEY':'k','DG_AI_MODEL':'Qwen/Qwen3.8-27B'}
+        with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)
+        self.assertEqual(settings.get('DB_KIND'),'postgres');self.assertEqual(settings.postgres,{'host':'db.internal','port':5432,'database':'postgres'})
+        self.assertEqual((settings.get('RO_SQL_USER'),settings.get('RO_SQL_PW')),('reader','pw'))
+        self.assertEqual((settings.get('LLM_API_URL'),settings.get('LLM_API_KEY'),settings.get('LLM_MODEL_NAME'),settings.get('AI_PROVIDER')),('http://10.20.30.40:8000/v1','k','Qwen/Qwen3.8-27B','openai_compatible'))
+        self.assertIn('10.20.30.40',settings.get('B2B_LLM_ALLOWED_HOSTS'))
+        self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project')
+        with patch.dict('os.environ',environment|{'PGPORT':'6543','PGDATABASE':'bi'},clear=True):self.assertEqual(Settings.load(self.root).postgres,{'host':'db.internal','port':6543,'database':'bi'})
+        (self.root/'.env').write_text('LLM_MODEL_NAME=file-model\nPGURL=other.example:5432/app\n')
+        with patch.dict('os.environ',environment,clear=True):settings=Settings.load(self.root)
+        self.assertEqual(settings.get('LLM_MODEL_NAME'),'Qwen/Qwen3.8-27B');self.assertEqual(settings.postgres['host'],'db.internal')
     def test_legacy_variables_remain_accepted(self):
         with patch.dict('os.environ',{'DB_KIND':'demo','AI_MODEL':'old-model','AI_BASE_URL':'http://localhost:9000/v1','AI_API_KEY':'local-key'},clear=True):
             settings=Settings.load(self.root)

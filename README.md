@@ -67,7 +67,9 @@ B2B_DATA_DIR=C:\YourInstallFolder\data
 APP_PORT=8765
 ```
 
-A blank `DB_KIND` selects PostgreSQL when `PGURL` is present, otherwise fictional demo data. `DB_KIND=demo` explicitly stays in demo mode. The old `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` and `AI_*` settings are accepted for existing installations; set `DB_KIND=postgres` with old database variables.
+On a work PC that already runs the data-governance app, no database or model settings are needed: the app reads `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` for PostgreSQL and `DG_AI_API_URL`, `DG_AI_API_KEY`, and `DG_AI_MODEL` for the model from the environment, and trusts the data-governance endpoint host automatically. Values in `.env` take precedence when set.
+
+A blank `DB_KIND` selects PostgreSQL when `PGURL` (or `PGHOST`) is present, otherwise fictional demo data. `DB_KIND=demo` explicitly stays in demo mode. The old `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` and `AI_*` settings are accepted for existing installations; set `DB_KIND=postgres` with old database variables.
 
 For development against a local export, set `DB_KIND=csv` and `B2B_CSV_PATH` explicitly. A relative path resolves from the folder containing `.env`; an absolute local path is accepted as is. `B2B_CSV_ENCODING` defaults to `utf-8-sig`. A missing, unreadable, malformed, or incomplete file stops the request with a message naming the file or the missing columns. CSV mode is never selected automatically, and a PostgreSQL failure never falls back to a CSV file or to demo data. Keep exports, copies, and result downloads in the install folder or another local place; `*.csv` and `*.xlsx` are Git-ignored, and the sample export must not be committed.
 
@@ -161,7 +163,7 @@ History is scoped by authenticated identity. The SQL source is shared for this t
 
 ## Updates and rollback
 
-Rerun `setup.ps1` or `update_app.ps1` from your original install folder. `tools/apply_update.ps1` accepts an exact 40-character commit for controlled deployment. Setup stages a separate release, reuses or downloads its pinned dependencies, runs regression/API checks, verifies the release/configuration, then atomically selects it. Existing `.env`, business rules, and the data/history folder survive updates. Stop the running app with Ctrl+C and run `start.ps1` again to use the new release.
+Run `update_app.ps1` from the install folder to update: it stops the running app, runs `setup.ps1`, and starts the new release in a new window (`-NoRestart` skips the restart). Rerunning `setup.ps1` alone also works. `tools/apply_update.ps1` accepts an exact 40-character commit for controlled deployment. Setup stages a separate release, reuses or downloads its pinned dependencies, runs regression/API checks, verifies the release/configuration, then atomically selects it. Existing `.env`, business rules, and the data/history folder survive updates. Stop the running app with Ctrl+C and run `start.ps1` again to use the new release.
 
 For an existing v0.2 installation, first replace its `setup.ps1` with the current repository copy once. That older bootstrap predates the GitHub asset lock and same-run installer refresh. Subsequent refreshes use the updated script automatically.
 
