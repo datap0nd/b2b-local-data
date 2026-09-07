@@ -26,6 +26,31 @@ QUERY_FIELDS=set(OPPORTUNITY_COLUMNS+SKU_COLUMNS)|DERIVED_FIELDS
 PRODUCT_FIELDS=set(SKU_COLUMNS)-set(OPPORTUNITY_COLUMNS)
 
 
+def assemble_reply(raw,provider):
+    """Message text from either a complete JSON reply or a streamed server-sent-events reply."""
+    text=raw.decode('utf-8','replace')
+    if not text.lstrip().startswith('data:'):
+        payload=json.loads(text)
+        if provider=='ollama': return payload['message']['content']
+        choice=payload['choices'][0]
+        return choice['message']['content'] if 'message' in choice else choice.get('text','')
+    parts=[]
+    for line in text.splitlines():
+        line=line.strip()
+        if not line.startswith('data:'): continue
+        data=line[5:].strip()
+        if data=='[DONE]' or not data: continue
+        event=json.loads(data)
+        if provider=='ollama':
+            parts.append(event.get('message',{}).get('content','') or '')
+        else:
+            choices=event.get('choices') or []
+            if choices:
+                delta=choices[0].get('delta') or choices[0].get('message') or {}
+                parts.append(delta.get('content','') or '')
+    return ''.join(parts)
+
+
 def extract_json(text):
     """The JSON object inside a model reply: reasoning blocks and code fences are stripped, prose around it ignored."""
     text=re.sub(r'<think>.*?</think>','',text,flags=re.S).strip()
@@ -327,31 +352,36 @@ Rules:\n{settings.rules}'''
             body={'model':model,'messages':messages,'stream':False,'format':QueryPlanV1.model_json_schema(),'options':{'temperature':0,'num_predict':3000}}
         elif provider=='openai_compatible':
             if not endpoint.endswith('/chat/completions'):
-                endpoint+=('/chat/completions' if endpoint.endswith('/v1') else '/v1/chat/completions')
-            body={'model':model,'messages':messages,'stream':False,'temperature':0,'max_tokens':5000,'response_format':{'type':'json_object'}}
+                endpoint+=('/chat/completions' if endpoint.endswith(('/v1','/openai')) else '/v1/chat/completions')
+            # The same minimal payload the Scribble client sends: no response_format; JSON is read from the reply text.
+            body={'model':model,'messages':messages,'stream':settings.flag('B2B_LLM_STREAM',True),'temperature':0,'max_tokens':5000}
         else: raise AppError('AI_PROVIDER must be ollama or openai_compatible.')
         where=f'{urlsplit(endpoint).hostname}:{urlsplit(endpoint).port or (443 if endpoint.startswith("https") else 80)} model {model!r}'
         def redact(text):
             text=str(text)
             return (text.replace(key,'***') if key else text)[:300]
-        timeout=settings.number('AI_TIMEOUT_SECONDS',120,high=300)
+        # The timeout applies to each read: a streaming reply may take longer overall, like Scribble's infinite timeout.
+        timeout=settings.number('AI_TIMEOUT_SECONDS',120,high=900)
+        # Like Scribble's .NET client, honour the Windows/system proxy settings unless disabled.
+        handlers=[NoRedirect()] if settings.flag('B2B_LLM_USE_SYSTEM_PROXY',True) else [ProxyHandler({}),NoRedirect()]
         def send(payload_body):
-            request=Request(endpoint,data=json.dumps(payload_body).encode(),headers=headers,method='POST')
-            with build_opener(ProxyHandler({}),NoRedirect()).open(request,timeout=timeout) as response:
-                raw=response.read(1000001)
-            if len(raw)>1000000: raise AppError('The model response exceeded the response limit.')
+            request=Request(endpoint,data=json.dumps(payload_body).encode(),headers=headers|{'Accept':'application/json, text/event-stream'},method='POST')
+            with build_opener(*handlers).open(request,timeout=timeout) as response:
+                raw=response.read(2000001)
+            if len(raw)>2000000: raise AppError('The model response exceeded the response limit.')
             return raw
         try:
             try: raw=send(body)
             except HTTPError as error:
-                # Servers without structured-output support reject response_format/format; retry as plain JSON text.
+                # Servers reject unsupported optional fields with 400 (temperature, response_format, format): retry without them.
                 reply=redact(error.read()[:1000].decode('utf-8','replace'))
-                if error.code in (400,422) and ('response_format' in body or 'format' in body) and ('format' in reply.lower() or 'json' in reply.lower()):
-                    body.pop('response_format',None); body.pop('format',None); raw=send(body)
+                optional=[k for k in ('temperature','response_format','format','stream') if k in body and k.replace('_',' ') in reply.lower().replace('_',' ')]
+                if error.code in (400,422) and optional:
+                    for k in optional: body.pop(k,None)
+                    raw=send(body)
                 else:
                     raise AppError(f'The local Qwen request to {where} failed: HTTP {error.code} {error.reason}. Server reply: {reply or "(empty)"}. Check the endpoint, model name, credentials, and structured-output support.') from None
-            payload=json.loads(raw)
-            content=payload['message']['content'] if provider=='ollama' else payload['choices'][0]['message']['content']
+            content=assemble_reply(raw,provider)
             incoming=parse_plan(extract_json(content),excerpt=redact(content))
             if view!='auto': incoming.grain=Grain.OPPORTUNITY if view=='summary' else Grain.OPPORTUNITY_SKU
             return incoming

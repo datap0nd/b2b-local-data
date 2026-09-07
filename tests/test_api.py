@@ -166,6 +166,8 @@ class PlannerProtocolTests(unittest.TestCase):
                 prompt=json.dumps(captured[-1][1])
                 self.assertNotIn('db-secret',prompt);self.assertNotIn('model-secret',prompt)
                 for word in ('deal_size','first_channel','deal_size_on_pricing_date_usd','once per opportunity'):self.assertIn(word,prompt)
+                if provider=='openai_compatible':
+                    self.assertEqual(set(captured[-1][1]),{'model','messages','stream','temperature','max_tokens'});self.assertTrue(captured[-1][1]['stream'])
         finally:server.shutdown();server.server_close();worker.join()
 
 
@@ -243,7 +245,7 @@ class PlannerFailureTests(unittest.TestCase):
         finally:server.shutdown();server.server_close();worker.join()
         with self.assertRaises(AppError) as error:PlannerClient(self.settings(1)).plan('Show deals',[])
         self.assertIn('could not be reached',str(error.exception))
-    def test_response_format_rejection_falls_back_and_wrapped_json_is_parsed(self):
+    def test_wrapped_json_reply_is_parsed_without_response_format(self):
         seen=[]
         class Stub(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
@@ -258,7 +260,24 @@ class PlannerFailureTests(unittest.TestCase):
         server,worker=self.serve(Stub)
         try:
             plan=PlannerClient(self.settings(server.server_address[1])).plan('Show won deals',[])
-            self.assertEqual(plan.filters[0].value,'Won');self.assertEqual(len(seen),2);self.assertNotIn('response_format',seen[1])
+            # response_format is never sent (Scribble-style payload), so the wrapped JSON is parsed on the first reply.
+            self.assertEqual(plan.filters[0].value,'Won');self.assertEqual(len(seen),1);self.assertNotIn('response_format',seen[0])
+        finally:server.shutdown();server.server_close();worker.join()
+    def test_streamed_reply_and_temperature_rejection(self):
+        seen=[]
+        class Stub(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])));seen.append(payload)
+                if 'temperature' in payload:
+                    data=b'{"error":{"message":"temperature is not supported for this model"}}';self.send_response(400);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+                chunks=['{"intent":"table",','"filters":[{"field":"stage",','"operator":"eq","value":"Won"}]}']
+                data=''.join('data: '+json.dumps({'choices':[{'delta':{'content':c}}]})+'\n\n' for c in chunks)+'data: [DONE]\n\n'
+                data=data.encode();self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        server,worker=self.serve(Stub)
+        try:
+            plan=PlannerClient(self.settings(server.server_address[1])).plan('Show won deals',[])
+            self.assertEqual(plan.filters[0].value,'Won');self.assertEqual(len(seen),2);self.assertNotIn('temperature',seen[1]);self.assertTrue(seen[1]['stream'])
         finally:server.shutdown();server.server_close();worker.join()
     def test_invalid_plan_names_the_problem(self):
         class Stub(BaseHTTPRequestHandler):
