@@ -5,10 +5,11 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 import zlib
 
 from app_config import AppError, Settings
-from acceptance_runner import AcceptanceRunner
+from acceptance_runner import AcceptanceRunner, replace_evidence
 from acceptance_suite import select_witnesses, match_plan, reference_spec
 from live_scenarios import SCENARIOS, STEPS, TARGETS
 from reference_evaluator import ReferenceSource, evaluate
@@ -28,6 +29,41 @@ def png():
 
 
 class LiveCatalogTests(unittest.TestCase):
+    def test_run_report_retries_windows_lock_without_repeating_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(Path(directory), {'DB_KIND': 'demo'})
+            runner = AcceptanceRunner(settings, None, None, Path(directory) / 'data', live=True)
+            run = {'id': 'a' * 32, 'version': 'previous'}
+            runner._save(run)
+            original = Path.replace
+            denied = PermissionError('Temporarily locked by another process')
+            denied.winerror = 5
+            attempts = []
+            def locked_once(source, target):
+                attempts.append((source, target))
+                if len(attempts) == 1:
+                    self.assertEqual(json.loads(target.read_text())['version'], 'previous')
+                    raise denied
+                return original(source, target)
+            with patch.object(Path, 'replace', locked_once), patch('acceptance_runner.sleep') as wait:
+                runner._save({**run, 'version': 'new'})
+            self.assertEqual(len(attempts), 2)
+            wait.assert_called_once_with(.05)
+            self.assertEqual(json.loads(runner._path(run['id']).read_text())['version'], 'new')
+
+    def test_persistent_lock_keeps_previous_report_and_temporary_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old, new = Path(directory) / 'run.json', Path(directory) / 'run.tmp'
+            old.write_text('previous'); new.write_text('new')
+            denied = PermissionError('Locked'); denied.winerror = 32
+            with patch.object(Path, 'replace', side_effect=denied) as rename, patch('acceptance_runner.sleep') as wait:
+                with self.assertRaises(PermissionError): replace_evidence(new, old)
+            self.assertEqual(rename.call_count, 8); self.assertEqual(wait.call_count, 7)
+            self.assertEqual(old.read_text(), 'previous'); self.assertEqual(new.read_text(), 'new')
+            with patch.object(Path, 'replace', side_effect=FileNotFoundError) as rename:
+                with self.assertRaises(FileNotFoundError): replace_evidence(new, old)
+            self.assertEqual(rename.call_count, 1)
+
     def test_live_http_actions_supporting_and_artifacts_are_owner_scoped(self):
         from test_api import LocalServer
         from acceptance_fixture import ScriptedPlanner

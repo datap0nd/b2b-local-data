@@ -11,7 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import threading
-from time import monotonic
+from time import monotonic, sleep
 from urllib.parse import urlsplit
 import uuid
 
@@ -29,6 +29,23 @@ MAX_RUNS_LISTED = 50
 IDENTITY_KEYS = ('source_fingerprint', 'app_revision', 'suite_version', 'evaluator_version', 'digest_version', 'calculation_version', 'source_contract_verified', 'rules_digest', 'model_config', 'prompt_digest', 'effective_date')
 STEP_STATES = ('pass', 'fail', 'error', 'review', 'blocked', 'not_applicable', 'pending')
 EXECUTED_STATES = ('pass', 'fail', 'error', 'review')
+
+
+def replace_evidence(temporary, destination):
+    """Keep replacement atomic while tolerating short Windows scanner/file locks.
+
+    Retry only the rename, never the query or model call. A persistent denial
+    leaves the previous destination and recoverable temporary file intact.
+    """
+    delays = (.05, .1, .2, .4, .8, 1., 1.)
+    for attempt in range(len(delays) + 1):
+        try:
+            temporary.replace(destination)
+            return
+        except OSError as error:
+            if getattr(error, 'winerror', None) not in (5, 32, 33) or attempt == len(delays):
+                raise
+            sleep(delays[attempt])
 
 
 def compare_supporting(expected, outcome):
@@ -162,7 +179,7 @@ class AcceptanceRunner:
         path = self._path(run['id'])
         temporary = path.with_suffix('.tmp')
         temporary.write_text(json.dumps(jsonable(run), ensure_ascii=False, indent=None if self.live else 1), encoding='utf-8')
-        temporary.replace(path)
+        replace_evidence(temporary, path)
         if self.live:
             self._cached_runs[run['id']] = run
             while len(self._cached_runs) > 3: self._cached_runs.pop(next(iter(self._cached_runs)))
@@ -578,7 +595,7 @@ class AcceptanceRunner:
         filename = f"{scenario['number']:03d}-{scenario_id}.png"
         temporary = folder / (filename + '.tmp')
         temporary.write_bytes(png)
-        temporary.replace(folder / filename)
+        replace_evidence(temporary, folder / filename)
         scenario['png'] = {'file': filename, 'bytes': len(png), 'width': width, 'height': height, 'sha256': hashlib.sha256(png).hexdigest()}
         self._finish_if_complete(run, run_id)
         self._save_scenarios(run)
@@ -601,7 +618,7 @@ class AcceptanceRunner:
         folder.mkdir(parents=True, exist_ok=True)
         temp = folder / 'scenarios.tmp'
         temp.write_text(json.dumps(jsonable(run['scenarios'])), encoding='utf-8')
-        temp.replace(folder / 'scenarios.json')
+        replace_evidence(temp, folder / 'scenarios.json')
         self._cached_runs[run['id']] = run
         if run['status'] == 'complete': self._save(run)
 
