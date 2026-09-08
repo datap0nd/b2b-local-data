@@ -19,6 +19,13 @@ class ReleaseTests(unittest.TestCase):
         for name in ('release_manifest.json','dependencies.lock.json','runtime.lock.json','portable_assets.lock.json'):shutil.copyfile(ROOT/name,self.root/name)
     def tearDown(self):self.temp.cleanup()
     def test_supplied_manifest_matches_contract_and_lock(self):verify_release(self.root,False)
+    def test_installed_lifecycle_never_starts_regression_tests(self):
+        for name in ('setup.ps1', 'update_app.ps1', 'start.ps1', 'scripts/install_windows_service.ps1'):
+            with self.subTest(script=name):
+                self.assertNotIn('--self-test', (ROOT/name).read_text(encoding='utf-8'))
+        setup = (ROOT/'setup.ps1').read_text(encoding='utf-8')
+        self.assertIn('--home $InstallDir --check', setup)
+        self.assertLess(setup.index('--home $InstallDir --check'), setup.index('$releaseSelected = $true'))
     def test_changed_release_values_block_launch(self):
         original=json.loads((self.root/'release_manifest.json').read_text())
         for key,value in [('app_version','other'),('data_schema_version',2),('query_plan_version',2),('python_tag','cp312'),('platform','win_arm64')]:

@@ -189,6 +189,8 @@ The installed Windows service always launches with explicit `--host 0.0.0.0 --po
 
 ## Updates and rollback
 
+Installation, updates, and startup do not run regression tests or generate test images. They validate release integrity, dependencies, configuration, and service health. In the installed app, tests start only through **Test → Run tests**; the developer regression suite runs separately in CI or by explicit developer command.
+
 Run `update_app.ps1` from the install folder to update. This is the only command needed: it requests Administrator access, stages and validates the new release, installs or refreshes the `B2BLocalData` service, updates its firewall rule, starts it, and checks `http://127.0.0.1:8766/api/status`. `-NoRestart` refreshes the service definition but leaves it stopped. `tools/apply_update.ps1` accepts an exact 40-character commit for controlled deployment. Existing `.env` settings, custom business rules, and the data/history folder survive updates. Missing Test defaults and hash-recognized shipped business rules migrate before the local configuration check; a failed check restores their original bytes before leaving the previous release selected.
 
 For an existing v0.2 installation, first replace its `setup.ps1` with the current repository copy once. That older bootstrap predates the GitHub asset lock and same-run installer refresh. Subsequent refreshes use the updated script automatically.

@@ -25,6 +25,10 @@ between PCs.
 
 ## On the work PC running B2B
 
+Installation, updates, and normal startup never run the test suite or generate test
+images. Installation validates release files, dependencies, and configuration only.
+Tests start when you choose **Test → Run tests**.
+
 Open **Test → Run tests**. The suite contains 200 scenarios and 291 prompt turns,
 including 40 continuity scenarios. It calls the configured local model and captures
 one fresh source snapshot for the entire run. There is no duration limit.

@@ -62,7 +62,7 @@ if ($serviceInstallRequested -and -not $isAdministrator) {
 }
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-# Read existing config for authentication; defer all config writes until release checks pass.
+# Read existing config for authentication; defer config writes until dependencies are ready.
 $envPath = Join-Path $InstallDir '.env'
 $localValues = Read-EnvFile $envPath
 # DG_GITHUB_TOKEN is the same GitHub token the data-governance installer uses: an environment variable, or a .env line.
@@ -226,8 +226,7 @@ try {
     # No network access or pip in the extraction step. Setup has fetched GitHub assets.
     & $python (Join-Path $release 'scripts\vendor_dependencies.py') --cache $DownloadCache --store (Join-Path $InstallDir 'dependencies') --offline
     if ($LASTEXITCODE -ne 0) { throw 'Local dependency extraction or verification failed.' }
-    & $python (Join-Path $release 'run.py') --self-test
-    if ($LASTEXITCODE -ne 0) { throw 'Release checks failed; the previous release is still selected.' }
+    # Installation validates files and configuration only. Scenario tests are user-initiated in the app.
     $configHelper = Join-Path $release 'scripts\install_config.py'
     & $python $configHelper --home $InstallDir --release $release --transaction $installId
     if ($LASTEXITCODE -ne 0) { throw 'Local configuration migration failed; the previous release is still selected.' }
