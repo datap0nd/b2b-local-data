@@ -1,12 +1,14 @@
 import {expect, test} from './fixtures';
 import {spawn} from 'node:child_process';
 import {readFile} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import path from 'node:path';
 
 test('local recorder produces playable video and retains ordered recovery chunks', async ({page}, info) => {
   test.skip(!!info.project.use.isMobile, 'Local-PC recorder targets desktop Chrome.');
   const root = path.resolve('..');
-  const python = process.env.B2B_TEST_PYTHON ?? path.join(root, '.install-test/runtime/python-3.13.15-amd64/python.exe');
+  const portable = path.join(root, '.install-test/runtime/python-3.13.15-amd64/python.exe');
+  const python = process.env.B2B_TEST_PYTHON ?? (existsSync(portable) ? portable : 'python');
   const program = "import sys; sys.path.insert(0,'.'); from scripts.capture_viewer import make_server; server,token=make_server(root='.local/capture-recorder-validation'); print('http://127.0.0.1:%d/#%s' % (server.server_port,token),flush=True); server.serve_forever()";
   const child = spawn(python, ['-c', program], {cwd: root, windowsHide: true});
   const url = await new Promise<string>((resolve, reject) => {
