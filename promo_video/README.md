@@ -4,8 +4,9 @@
 
 A minimal, interface-led product demo: 48 of 60 seconds show recordings of the
 actual shipped B2B frontend, including typing, pending states, results, switching
-Chart/Data, and downloading CSV. English narration, quiet original synth music,
-and separate English subtitles. H.264/AAC, 1920 × 1080, 30 fps.
+Chart/Data, reopening saved conversations from the left sidebar, and downloading
+CSV. English narration, quiet original synth music, burned-in bottom subtitles
+and a separate SRT. H.264/AAC, 1920 × 1080, 30 fps.
 
 ## Demo scope
 
@@ -13,7 +14,8 @@ All business data is invented. The capture serves only `web/dist` and intercepts
 every API request with a fictional response. No application backend, Salesforce
 extract, database, credentials or user history is accessed. The frontend itself
 is unmodified. This is a real UI recording with simulated responses, not a live
-model or database performance benchmark. The footer labels the scripted timing.
+model or database performance benchmark. At the user's request, there are no
+on-screen demo or scripted-timing labels; this source note retains that context.
 
 The mock response delay is 1.45 seconds; browser interaction and rendering bring
 the observed click-to-visible-result time to approximately two seconds. Actual
@@ -23,17 +25,26 @@ interaction at normal speed. It does not assert a measured production SLA.
 Six fictional opportunities sum to EUR 120,000: Negotiation 60,000, Qualified
 40,000, Identified 20,000. Two opportunities are in each stage. The negotiation
 query and exported CSV contain the same two records, EUR 35,000 and EUR 25,000.
+Customer and project names, the owner and history entries are also invented.
+
+The local-model selling point is expressed as “No per-token API fees” for a
+self-hosted model. It does not mean hardware, electricity or hosting have no
+cost, or promise unlimited throughput. The app's README documents the local
+Qwen/Ollama endpoint support and lack of a public-cloud model fallback.
 
 ## Edit
 
 - 00–04: “Your pipeline. Answers in seconds.”
 - 04–20: Type the question; the EUR 120,000 result appears with supporting records.
 - 20–36: Ask for the stage breakdown; switch between the chart and table.
-- 36–52: Ask for negotiation deals; inspect the two records and download CSV.
-- 52–60: “Ask. Get answers. Move forward.”
+- 36–52: Ask for negotiation deals; reopen a saved chart from history, return
+  to the two records, and download CSV.
+- 52–60: “Local LLM. No per-token API fees.”
 
 The earlier Scribble-inspired graphic treatment has been replaced by a warm
-white background, concise headlines and actual UI footage.
+white background, concise headlines and actual UI footage. Chat history stays
+open. Subtitles follow the generated voice's word timestamps and occupy a
+reserved band below the app, without covering its input or data.
 
 ## Rebuild
 

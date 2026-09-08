@@ -9,10 +9,10 @@ const root = __dirname, dist = path.resolve(root, '../web/dist');
 const out = path.join(root, 'captures'); fs.mkdirSync(out, {recursive:true});
 const delay = ms => new Promise(r=>setTimeout(r,ms));
 const rows = [35000,25000,22000,18000,12000,8000].map((amount,i)=>({
-  opportunity_no:`DEMO-${i+1}`, opportunity_name:`Demo project ${String.fromCharCode(65+i)}`,
-  end_customer:`Example customer ${i+1}`, opportunity_amount:String(amount),
+  opportunity_no:`OPP-00${i+1}`, opportunity_name:['Cedar rollout','Orion expansion','Maple refresh','Atlas upgrade','Willow launch','Nova rollout'][i],
+  end_customer:['Cedar Works','Orion Studio','Maple Labs','Atlas Systems','Willow Group','Nova Works'][i], opportunity_amount:String(amount),
   stage:['Negotiation','Negotiation','Qualified','Qualified','Identified','Identified'][i],
-  opportunity_owner:'Demo owner', close_date:'2026-12-15',opp_amount_converted_currency:'EUR'
+  opportunity_owner:'Alex Morgan', close_date:'2026-12-15',opp_amount_converted_currency:'EUR'
 }));
 function table(overrides={}) {
  return {columns:['amount'],column_types:{amount:'number'},rows:[{amount:'120000'}],total_rows:1,
@@ -45,7 +45,7 @@ const server=http.createServer((q,r)=>{
  try {
  for(let i=0;i<3;i++) {
   const context=await browser.newContext({viewport:{width:1440,height:810},deviceScaleFactor:1,recordVideo:{dir:out,size:{width:1440,height:810}}});
-  await context.addInitScript(()=>localStorage.setItem('b2b-sidebar','collapsed'));
+  await context.addInitScript(()=>localStorage.setItem('b2b-sidebar','open'));
   let calls=0; const errors=[];
   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/**',async route=>{
@@ -53,7 +53,15 @@ const server=http.createServer((q,r)=>{
    let body;
    if(p==='/api/bootstrap') body={identity:{login_required:false,name:'Demo user',mode:'local'},capabilities:{acceptance_ui:false,samples:false,saved_results:true,contract_version:2,views:['summary'],presentations:['cards','chart','table']}};
    else if(p==='/api/freshness') body={freshness:null};
-   else if(p==='/api/sessions') body={sessions:[]};
+   else if(p==='/api/sessions') body={sessions:[...(calls?[{id:'video-demo',title:['Open pipeline value','Pipeline by stage','Negotiation deals'][i],updated_at:new Date().toISOString()}]:[]),{id:'history-stage',title:'Stage breakdown',updated_at:new Date().toISOString()},{id:'history-total',title:'Pipeline overview',updated_at:new Date().toISOString()},{id:'history-deals',title:'Deals to follow up',updated_at:new Date().toISOString()}]};
+   else if(p.match(/^\/api\/sessions\/[^/]+$/)) {
+    const id=p.split('/').pop();const index=id==='history-stage'?1:id==='history-total'?0:id==='video-demo'?i:2;
+    body={id,title:'Saved conversation',turns:[{id:1,question:prompts[index],response:'',plan:{},kind:'data',has_result:true,created_at:new Date().toISOString()}],active_plan:null};
+   }
+   else if(p.endsWith('/result')) {
+    const id=p.split('/')[3];const index=id==='history-stage'?1:id==='history-total'?0:id==='video-demo'?i:2;
+    body={...answer(index),available:true};
+   }
    else if(p==='/api/ask'){calls++;await delay(1450);body=answer(i);}
    else throw new Error('Unexpected API request: '+p);
    await route.fulfill({json:body});
@@ -68,7 +76,13 @@ const server=http.createServer((q,r)=>{
   const elapsed=Date.now()-sent;
   await page.waitForTimeout(1200);await page.screenshot({path:path.join(out,`result-${i}.png`)});
   if(i===1){await page.waitForTimeout(1800);await page.getByRole('button',{name:'Data',exact:true}).click();await page.waitForTimeout(1500);await page.getByRole('button',{name:'Chart',exact:true}).click();}
-  if(i===2){await page.waitForTimeout(2000);const download=page.waitForEvent('download');await page.getByTestId('export').click();const file=await download;await file.saveAs(path.join(out,'fictional-result.csv'));}
+  if(i===2){
+   await page.waitForTimeout(900);await page.getByRole('button',{name:'Stage breakdown',exact:true}).click();
+   await page.getByTestId('answer-title').filter({hasText:'Open pipeline by stage'}).waitFor();
+   await page.waitForTimeout(2100);await page.getByRole('button',{name:'Negotiation deals',exact:true}).click();
+   await page.getByTestId('answer-title').filter({hasText:'Opportunities in negotiation'}).waitFor();
+   await page.waitForTimeout(1200);const download=page.waitForEvent('download');await page.getByTestId('export').click();const file=await download;await file.saveAs(path.join(out,'fictional-result.csv'));
+  }
   await page.waitForTimeout(Math.max(0,15500-(Date.now()-started)));
   if(errors.length||calls!==1)throw new Error(JSON.stringify({errors,calls}));
   const video=page.video();await context.close();const raw=await video.path();

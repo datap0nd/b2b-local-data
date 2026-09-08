@@ -9,10 +9,10 @@ W,H,FPS,DURATION=1920,1080,30,60
 CUES=[0,4,20,36,52]
 NARRATION=[
  'Your pipeline. Answers in seconds.',
- 'Need the open pipeline value? Just ask. The answer appears, with the opportunities behind it. One question. A clear number.',
- 'Want the breakdown? Ask for value by stage. See where the pipeline sits, then switch from the chart to the data in a click.',
- 'Need the deals in negotiation? Ask directly. Find the matching opportunities, see their values, and download the result. Keep your attention on the decision.',
- 'B2B. Answers in seconds. Move forward.'
+ 'Ask for your open pipeline value. Your locally hosted language model understands the question. Get the answer, with the records behind it.',
+ 'Break it down by stage. Your local model runs without per-token API fees. Explore the chart, then switch to the data in a click.',
+ 'Find the opportunities in negotiation. Open past conversations from the history on the left. Keep your answers close, and export the records when you need them.',
+ 'Local intelligence. No per-token fees. B2B.'
 ]
 INK='#18233b'; BLUE='#315bd6'; PAPER='#f5f4f0'
 def ffmpeg(): return os.environ.get('FFMPEG_EXE','ffmpeg')
@@ -26,16 +26,14 @@ def art():
  for name in ['intro','outro']:
   im=Image.new('RGB',(W,H),PAPER);d=ImageDraw.Draw(im)
   center(d,205,'B2B',40,BLUE,True)
-  center(d,365,'Your pipeline.' if name=='intro' else 'Ask. Get answers.',96,INK,True)
-  center(d,487,'Answers in seconds.' if name=='intro' else 'Move forward.',96,BLUE,True)
-  if name=='outro':center(d,696,'Less searching. More deciding.',35,'#65728a')
-  center(d,1020,'Fictional data · Scripted demo timing',23,'#65728a')
+  center(d,365,'Your pipeline.' if name=='intro' else 'Local LLM.',96,INK,True)
+  center(d,487,'Answers in seconds.' if name=='intro' else 'No per-token API fees.',96,BLUE,True)
+  if name=='outro':center(d,696,'Ask. Get answers. Keep going.',35,'#65728a')
   im.save(cache/f'{name}.png')
  for i,headline in enumerate(['Ask. Get the number.','Ask. See the breakdown.','Ask. Find the deals.']):
   im=Image.new('RGBA',(W,H),(0,0,0,0));d=ImageDraw.Draw(im)
   text(d,(100,29),'B2B',35,BLUE,True);text(d,(295,22),headline,48,INK,True)
-  text(d,(100,1037),'Fictional data · Scripted ~2-second responses',22,'#65728a')
-  text(d,(1620,1037),f'0{i+1} / 03',22,'#65728a')
+  text(d,(1260,43),'LOCAL LLM  /  NO TOKEN FEES',26,BLUE,True)
   im.save(cache/f'overlay-{i}.png')
  return cache
 def run(args):
@@ -53,7 +51,7 @@ def main():
  for name,duration in [('intro',4),('outro',8)]:
   run(['-loop','1','-i',str(cache/f'{name}.png'),'-t',str(duration),*encode,str(cache/f'{name}.mp4')])
  for i in range(3):
-  run(['-i',str(ROOT/'captures'/f'ui-{i}.webm'),'-loop','1','-i',str(cache/f'overlay-{i}.png'),'-filter_complex','[0:v]scale=1600:900,pad=1920:1080:160:116:color=0xf5f4f0[ui];[ui][1:v]overlay=0:0:shortest=1[v]','-map','[v]','-t','16',*encode,str(cache/f'ui-{i}.mp4')])
+  run(['-i',str(ROOT/'captures'/f'ui-{i}.webm'),'-loop','1','-i',str(cache/f'overlay-{i}.png'),'-filter_complex','[0:v]scale=1536:864,pad=1920:1080:192:110:color=0xf5f4f0[ui];[ui][1:v]overlay=0:0:shortest=1[v]','-map','[v]','-t','16',*encode,str(cache/f'ui-{i}.mp4')])
   print(f'Edited UI scene {i+1}/3',flush=True)
  names=['intro','ui-0','ui-1','ui-2','outro']
  (cache/'concat.txt').write_text('\n'.join(f"file '{n}.mp4'" for n in names))

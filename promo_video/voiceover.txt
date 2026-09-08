@@ -1,9 +1,9 @@
 00s: Your pipeline. Answers in seconds.
 
-04s: Need the open pipeline value? Just ask. The answer appears, with the opportunities behind it. One question. A clear number.
+04s: Ask for your open pipeline value. Your locally hosted language model understands the question. Get the answer, with the records behind it.
 
-20s: Want the breakdown? Ask for value by stage. See where the pipeline sits, then switch from the chart to the data in a click.
+20s: Break it down by stage. Your local model runs without per-token API fees. Explore the chart, then switch to the data in a click.
 
-36s: Need the deals in negotiation? Ask directly. Find the matching opportunities, see their values, and download the result. Keep your attention on the decision.
+36s: Find the opportunities in negotiation. Open past conversations from the history on the left. Keep your answers close, and export the records when you need them.
 
-52s: B2B. Answers in seconds. Move forward.
+52s: Local intelligence. No per-token fees. B2B.

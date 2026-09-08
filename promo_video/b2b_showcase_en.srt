@@ -1,19 +1,55 @@
 1
-00:00:00,250 --> 00:00:03,549
-Your pipeline. Answers in seconds.
+00:00:00,332 --> 00:00:01,224
+Your pipeline.
 
 2
-00:00:04,250 --> 00:00:16,300
-Need the open pipeline value? Just ask. The answer appears, with the opportunities behind it. One question. A clear number.
+00:00:01,814 --> 00:00:02,952
+Answers in seconds.
 
 3
-00:00:20,250 --> 00:00:29,990
-Want the breakdown? Ask for value by stage. See where the pipeline sits, then switch from the chart to the data in a click.
+00:00:04,350 --> 00:00:06,558
+Ask for your open pipeline value.
 
 4
-00:00:36,250 --> 00:00:48,539
-Need the deals in negotiation? Ask directly. Find the matching opportunities, see their values, and download the result. Keep your attention on the decision.
+00:00:07,312 --> 00:00:10,695
+Your locally hosted language model understands the question.
 
 5
-00:00:52,250 --> 00:00:58,179
-B2B. Answers in seconds. Move forward.
+00:00:11,450 --> 00:00:13,920
+Get the answer, with the records behind it.
+
+6
+00:00:20,350 --> 00:00:21,932
+Break it down by stage.
+
+7
+00:00:22,675 --> 00:00:25,882
+Your local model runs without per-token API fees.
+
+8
+00:00:26,625 --> 00:00:29,820
+Explore the chart, then switch to the data in a click.
+
+9
+00:00:36,350 --> 00:00:38,745
+Find the opportunities in negotiation.
+
+10
+00:00:39,500 --> 00:00:42,582
+Open past conversations from the history on the left.
+
+11
+00:00:43,325 --> 00:00:46,782
+Keep your answers close, and export the records when you need them.
+
+12
+00:00:52,350 --> 00:00:53,820
+Local intelligence.
+
+13
+00:00:54,575 --> 00:00:56,032
+No per-token fees.
+
+14
+00:00:56,775 --> 00:00:57,908
+B2B.
