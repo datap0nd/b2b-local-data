@@ -1,0 +1,23 @@
+1
+00:00:00,500 --> 00:00:09,500
+Your sales data holds the answers. B2B makes them easier to find. This entire demonstration uses fictional data.
+
+2
+00:00:10,500 --> 00:00:19,500
+Ask a question in plain language. A locally hosted model creates a validated plan, and a deterministic engine calculates the answer.
+
+3
+00:00:20,500 --> 00:00:29,500
+See open opportunities by stage. Switch between charts and data, then refine the conversation to focus on what matters.
+
+4
+00:00:30,500 --> 00:00:39,500
+Go beyond the headline. Inspect supporting opportunities, explore product details, and export the complete result to CSV.
+
+5
+00:00:40,500 --> 00:00:49,500
+Keep quality issues visible. Review affected fields, check data freshness, and revisit saved answers with their original context.
+
+6
+00:00:50,500 --> 00:00:59,500
+From Salesforce extracts to a clearer commercial picture. B2B. Ask, understand, and act, with answers you can trace.

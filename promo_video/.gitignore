@@ -1,0 +1,4 @@
+audio/
+__pycache__/
+*.log
+silent.mp4

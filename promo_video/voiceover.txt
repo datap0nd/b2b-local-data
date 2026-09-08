@@ -1,0 +1,11 @@
+00s: Your sales data holds the answers. B2B makes them easier to find. This entire demonstration uses fictional data.
+
+10s: Ask a question in plain language. A locally hosted model creates a validated plan, and a deterministic engine calculates the answer.
+
+20s: See open opportunities by stage. Switch between charts and data, then refine the conversation to focus on what matters.
+
+30s: Go beyond the headline. Inspect supporting opportunities, explore product details, and export the complete result to CSV.
+
+40s: Keep quality issues visible. Review affected fields, check data freshness, and revisit saved answers with their original context.
+
+50s: From Salesforce extracts to a clearer commercial picture. B2B. Ask, understand, and act, with answers you can trace.
