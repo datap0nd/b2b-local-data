@@ -7,6 +7,7 @@ param(
     [string]$LocalSource,
     [string]$DownloadCache,
     [switch]$Offline,
+    [switch]$NoServiceStart,
     [ValidatePattern('^(local|[a-f0-9]{40})$')][string]$SourceCommit = 'local'
 )
 $ErrorActionPreference = 'Stop'
@@ -38,6 +39,28 @@ if (-not $InstallDir) { $InstallDir = Setting 'B2B_INSTALL_ROOT' $bootstrapValue
 if (-not $InstallDir) { $InstallDir = $scriptRoot }
 if (-not [IO.Path]::IsPathRooted($InstallDir)) { $InstallDir = Join-Path $scriptRoot $InstallDir }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
+
+# Online installs use the same elevated, auto-starting Windows service model as Metronome.
+# Local-source test installs keep their existing unprivileged behavior.
+$serviceInstallRequested = (-not $LocalSource) -or ($SourceCommit -match '^[a-f0-9]{40}$')
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($serviceInstallRequested -and -not $isAdministrator) {
+    if (-not $PSCommandPath) { throw 'Run update_app.ps1 from its file so setup can request Administrator access.' }
+    $arguments = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"",
+        '-InstallDir', "`"$InstallDir`"", '-Repository', "`"$Repository`"",
+        '-Ref', "`"$Ref`"", '-SourceCommit', "`"$SourceCommit`""
+    )
+    if ($LocalSource) { $arguments += @('-LocalSource', "`"$LocalSource`"") }
+    if ($DownloadCache) { $arguments += @('-DownloadCache', "`"$DownloadCache`"") }
+    if ($Offline) { $arguments += '-Offline' }
+    if ($NoServiceStart) { $arguments += '-NoServiceStart' }
+    $elevated = Start-Process powershell.exe -ArgumentList ($arguments -join ' ') -Verb RunAs -Wait -PassThru
+    exit $elevated.ExitCode
+}
+
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 # Read existing config for authentication; defer all config writes until release checks pass.
 $envPath = Join-Path $InstallDir '.env'
@@ -157,7 +180,10 @@ try {
         if ((Get-FileHash -LiteralPath $freshSetup).Hash -ne (Get-FileHash -LiteralPath $PSCommandPath).Hash) {
             $setupLock.Dispose(); $setupLock = $null
             Write-Host 'Continuing with the freshly downloaded setup.ps1.'
-            & $freshSetup -InstallDir $InstallDir -Repository $Repository -LocalSource $source -SourceCommit $commit -DownloadCache $DownloadCache
+            $freshArguments = @{ InstallDir=$InstallDir; Repository=$Repository; LocalSource=$source; SourceCommit=$commit; DownloadCache=$DownloadCache }
+            if ($Offline) { $freshArguments.Offline = $true }
+            if ($NoServiceStart) { $freshArguments.NoServiceStart = $true }
+            & $freshSetup @freshArguments
             if ($LASTEXITCODE -ne 0) { throw 'Updated setup script failed.' }
             return
         }
@@ -217,10 +243,21 @@ try {
     else { [IO.File]::Move($pending, $current) }
     $releaseSelected = $true
     foreach ($name in @('start.ps1','setup.ps1','update_app.ps1')) { Copy-Item -LiteralPath (Join-Path $release $name) -Destination (Join-Path $InstallDir $name) -Force }
+    if ($commit -match '^[a-f0-9]{40}$') {
+        $serviceInstaller = Join-Path $release 'scripts\install_windows_service.ps1'
+        $serviceArguments = @{ InstallDir=$InstallDir; ReleaseDir=$release; PythonExe=$python; Port=8766 }
+        if ($NoServiceStart) { $serviceArguments.NoStart = $true }
+        & $serviceInstaller @serviceArguments
+        if ($LASTEXITCODE -ne 0) { throw 'The B2B Windows service installation failed.' }
+    }
     Write-Host "Ready in this folder: $InstallDir"
     Write-Host "Active application: $release"
     Write-Host 'Local settings and data were preserved. Missing Test defaults and known shipped business rules were updated with local backups.'
-    Write-Host 'Run start.ps1. After an update, stop the running app with Ctrl+C and start it again.'
+    if ($commit -match '^[a-f0-9]{40}$') {
+        Write-Host 'B2B is installed as the auto-starting B2BLocalData Windows service on port 8766.'
+    } else {
+        Write-Host 'Local-source test install complete. Run start.ps1 for a foreground development server.'
+    }
 } catch {
     $setupError = $_
     if ($configMigrated -and -not $releaseSelected) {
