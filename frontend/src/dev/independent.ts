@@ -3,6 +3,7 @@
 import type {Cell, TablePayload} from '@/types';
 
 export const LABELS: Record<string, string> = {opportunity_no: 'Opportunity no.', opportunity_name: 'Opportunity', end_customer: 'Customer', opportunity_owner: 'Owner', stage: 'Stage', stage_group: 'Opportunity status', close_date: 'Close date', close_month: 'Closing month',
+  biz_group: 'Business group', seg_1: 'Segment 1', seg_2: 'Segment 2', seg_3: 'Segment 3', series: 'Series',
   created_date: 'Created', last_modified_date: 'Last modified', product_code: 'Product code', pet_name: 'Product', product_codes: 'Product codes', product_names: 'Product names', quantity: 'Quantity', opportunity_amount: 'Amount', sku_amount: 'Amount', amount: 'Amount',
   deal_size: 'Deal size (USD)', sku_count: 'Product count', opportunity_count: 'Opportunity count', opp_amount_converted_currency: 'Currency', amount_converted_currency: 'Currency', has_amount_discrepancy: 'Amount check', has_quality_warning: 'Data quality', probability: 'Probability',
   type: 'Type', first_channel: 'First channel', comment: 'Comment', age: 'Age', subsidiary_subsidiary_code: 'Subsidiary', gscm_product_group_new: 'Product group', biz_focus: 'Business focus', business_location: 'Location', division: 'Division', sales_type_detail: 'Sales type',

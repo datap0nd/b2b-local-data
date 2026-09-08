@@ -52,6 +52,12 @@ def contained(root, relative):
     return target
 
 
+def migrate_segmented_source(raw):
+    """Replace only the former shipped relation; retain custom sources and all other bytes."""
+    pattern = rb'(?mi)^((?:\xef\xbb\xbf)?[ \t]*B2B_RAW_TABLE[ \t]*=[ \t]*)([\x22\x27]?)(bi_reporting\.b2b_project)(\2)([ \t]*)(?=\r?$)'
+    return re.sub(pattern, lambda m: m[1] + m[2] + b'bi_reporting.b2b_project_segmented' + m[4] + m[5], raw)
+
+
 def transaction_path(root, transaction):
     if not re.fullmatch(r'[a-f0-9]{32}', transaction):
         raise ValueError('Invalid configuration transaction identifier.')
@@ -76,7 +82,7 @@ def migrate(root, release, transaction):
         target = contained(root, name)
         old = target.read_bytes() if target.exists() else None
         if name == '.env':
-            new = enable_test_if_missing(old if old is not None else (release / template).read_bytes())
+            new = migrate_segmented_source(enable_test_if_missing(old if old is not None else (release / template).read_bytes()))
         else:
             new = (release / template).read_bytes() if old is None or known_shipped_rules(old, release) else old
         if old != new:

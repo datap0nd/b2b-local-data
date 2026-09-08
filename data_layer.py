@@ -30,6 +30,7 @@ SOURCE_BUSINESS_FIELDS = {
 # The canonical data schema: every raw Salesforce column, its exact PostgreSQL column name, and its parser.
 # Canonical field names are lower snake_case identifiers starting with a letter. The SQL column name is
 # identical unless it is not a valid identifier, in which case the manual alias below applies.
+CLASSIFICATION_FIELDS = ('biz_group', 'seg_1', 'seg_2', 'seg_3', 'series')
 SOURCE_FIELDS = [
     ('opportunity_no', 'opportunity_no', 'text'),
     ('product_code', 'product_code', 'text'),
@@ -61,12 +62,13 @@ SOURCE_FIELDS = [
     ('close_date', 'close_date', 'date'),
     ('created_date', 'created_date', 'date'),
     ('last_modified_date', 'last_modified_date', 'date'),
-]
+] + [(name, name, 'text') for name in CLASSIFICATION_FIELDS]
 FIELD_KINDS = {name: kind for name, _, kind in SOURCE_FIELDS}
 SQL_COLUMNS = {name: column for name, column, _ in SOURCE_FIELDS}
 RAW_COLUMNS = [name for name, _, _ in SOURCE_FIELDS]
 # Manual header aliases, keyed by normalized header text (see normalize_header).
 HEADER_ALIASES = {
+    'business_group': 'biz_group', 'segment_1': 'seg_1', 'segment_2': 'seg_2', 'segment_3': 'seg_3',
     '1st_channel': 'first_channel',
     'first_channel': 'first_channel',
     'opportunity_amount_converted': 'opp_amount_converted',
@@ -83,7 +85,7 @@ DATE_FIELDS = [name for name, kind in FIELD_KINDS.items() if kind == 'date']
 OPPORTUNITY_ATTRIBUTES = ['first_channel', 'age', 'comment', 'deal_size_on_pricing_date_usd']
 ATTRIBUTE_NUMBERS = ['age', 'deal_size_on_pricing_date_usd']
 SKU_METADATA = [f for f in TEXT_FIELDS if f not in ('opportunity_no', 'product_code')]
-SKU_ONLY_METADATA = ('gscm_product_group_new', 'pet_name', 'amount_converted_currency')
+SKU_ONLY_METADATA = ('gscm_product_group_new', 'pet_name', 'amount_converted_currency') + CLASSIFICATION_FIELDS
 OPPORTUNITY_METADATA = [f for f in SKU_METADATA if f not in SKU_ONLY_METADATA]
 SKU_COLUMNS = ['opportunity_no', 'product_code'] + SKU_METADATA + ['quantity', 'sku_amount', 'exported_opp_amount_min',
     'exported_opp_amount_max', 'exported_opp_amount_value_count', 'probability'] + ATTRIBUTE_NUMBERS + DATE_FIELDS + ['source_row_count', 'has_quality_warning']
@@ -142,8 +144,8 @@ def normalize_header(header):
     return re.sub(r'[^0-9a-z]+', '_', str(header).strip().casefold()).strip('_')
 
 
-def resolve_columns(names, source='source'):
-    """Map source column names to the 30 canonical fields; report missing or ambiguous columns."""
+def resolve_columns(names, source='source', optional=()):
+    """Map source columns, rejecting missing required or ambiguous fields."""
     by_normalized = {normalize_header(column): name for name, column, _ in SOURCE_FIELDS}
     by_normalized.update({normalize_header(name): name for name in RAW_COLUMNS})
     by_normalized.update(HEADER_ALIASES)
@@ -156,7 +158,7 @@ def resolve_columns(names, source='source'):
     if ambiguous:
         detail = '; '.join(f"{field}: {', '.join(found)}" for field, found in sorted(ambiguous.items()))
         raise AppError(f'The {source} has ambiguous columns for one field. Keep exactly one of each: {detail}.')
-    missing = [name for name in RAW_COLUMNS if name not in matches]
+    missing = [name for name in RAW_COLUMNS if name not in matches and name not in optional]
     if missing:
         detail = ', '.join(f'{name} ({SQL_COLUMNS[name]})' if SQL_COLUMNS[name] != name else name for name in missing)
         raise AppError(f'The {source} is missing required Salesforce columns: {detail}.')
@@ -206,7 +208,7 @@ FINGERPRINT_FIELDS = ['opportunity_no', 'product_code', 'subsidiary_subsidiary_c
                       'pet_name', 'stage', 'opportunity_owner', 'biz_focus', 'business_location', 'division', 'sales_type_detail', 'type',
                       'amount_converted_currency', 'opp_amount_converted_currency', 'rollout_period_to', 'rollout_period_from', 'first_channel', 'comment',
                       'quantity', 'amount_converted', 'opp_amount_converted', 'age', 'deal_size_on_pricing_date_usd', 'probability',
-                      'close_month', 'close_date', 'created_date', 'last_modified_date']
+                      'close_month', 'close_date', 'created_date', 'last_modified_date'] + list(CLASSIFICATION_FIELDS)
 
 
 def dataset_fingerprint(raw):
@@ -459,7 +461,7 @@ def read_csv_source(path, encoding='utf-8-sig', cap=100000):
             header = next(csv.reader(stream), None)
         if not header or not any(name.strip() for name in header):
             raise AppError(f'The CSV source file has no header row: {path.name}.')
-        mapping = resolve_columns(header, f'CSV file {path.name}')
+        mapping = resolve_columns(header, f'CSV file {path.name}', optional=CLASSIFICATION_FIELDS)
         positions = {field: header.index(name) for field, name in mapping.items()}
         # Every column is read so a row with extra fields is reported as malformed instead of silently trimmed.
         frame = pd.read_csv(path, header=None, skiprows=1, names=[f'column_{i}' for i in range(len(header))],
@@ -473,6 +475,8 @@ def read_csv_source(path, encoding='utf-8-sig', cap=100000):
     if len(frame) > cap:
         raise AppError(f'The source exceeds {cap:,} rows. Increase MAX_SOURCE_ROWS before computing complete totals.')
     frame = frame.rename(columns={f'column_{position}': field for field, position in positions.items()})
+    for field in CLASSIFICATION_FIELDS:
+        if field not in frame: frame[field] = None
     return frame.loc[:, RAW_COLUMNS].astype(object)
 
 
@@ -517,10 +521,15 @@ class DataRepository:
 
     def _columns(self, connection, relation):
         schema, table = relation.split('.')
-        rows = connection.execute(text('SELECT column_name FROM information_schema.columns WHERE table_schema = :schema AND table_name = :table ORDER BY ordinal_position'),
+        rows = connection.execute(text('''SELECT a.attname FROM pg_catalog.pg_attribute a
+            JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = :schema AND c.relname = :table
+              AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND a.attnum > 0 AND NOT a.attisdropped
+            ORDER BY a.attnum'''),
                                   {'schema': schema, 'table': table}).fetchall()
         if not rows:
-            raise AppError(f'The raw table {relation} does not exist or is not readable by the configured read-only user.')
+            raise AppError(f'The source relation {relation} does not exist or is not readable by the configured read-only user.')
         return resolve_columns([row[0] for row in rows], f'raw table {relation}')
 
     def _read(self, connection, relation, mapping):
@@ -543,7 +552,7 @@ class DataRepository:
             path = self.settings.csv_path
             self.last_freshness = unavailable('A local CSV export records no verified data-update time.')
             return read_csv_source(path, self.settings.get('B2B_CSV_ENCODING') or 'utf-8-sig', self._cap()), 'csv', path.name
-        relation = self.settings.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project'
+        relation = self.settings.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project_segmented'
         try:
             with self._engine().connect() as connection:
                 with connection.begin():

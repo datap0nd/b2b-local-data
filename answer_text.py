@@ -6,6 +6,7 @@ import re
 from decimal import Decimal
 
 LABELS={'opportunity_no':'Opportunity no.','opportunity_name':'Opportunity','end_customer':'Customer','opportunity_owner':'Owner','stage':'Stage','stage_group':'Opportunity status',
+        'biz_group':'Business group','seg_1':'Segment 1','seg_2':'Segment 2','seg_3':'Segment 3','series':'Series',
         'close_date':'Close date','close_month':'Closing month','created_date':'Created','last_modified_date':'Last modified','product_code':'Product code','pet_name':'Product',
         'quantity':'Quantity','opportunity_amount':'Amount','sku_amount':'Amount','amount':'Amount','deal_size':'Deal size (USD)','sku_count':'Product count','opportunity_count':'Opportunity count',
         'opp_amount_converted_currency':'Currency','amount_converted_currency':'Currency','type':'Type','first_channel':'First channel','probability':'Probability','gscm_product_group_new':'Product group',

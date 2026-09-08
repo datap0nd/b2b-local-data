@@ -176,7 +176,7 @@ class Settings:
             return 'Fictional sample data'
         if kind == 'csv':
             return 'CSV file ' + self.csv_path.name
-        return 'PostgreSQL ' + (self.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project')
+        return 'PostgreSQL ' + (self.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project_segmented')
 
     @property
     def postgres(self):

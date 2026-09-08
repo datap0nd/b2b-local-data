@@ -25,11 +25,13 @@ RAW_TEXT = ['opportunity_no', 'product_code', 'subsidiary_subsidiary_code', 'opp
             'amount_converted_currency', 'opp_amount_converted_currency', 'rollout_period_to', 'rollout_period_from', 'first_channel', 'comment']
 RAW_NUMBER = ['quantity', 'amount_converted', 'opp_amount_converted', 'age', 'deal_size_on_pricing_date_usd']
 RAW_DATE = ['close_month', 'close_date', 'created_date', 'last_modified_date']
-RAW_FIELDS = RAW_TEXT + RAW_NUMBER + ['probability'] + RAW_DATE
+CLASSIFICATIONS = ['biz_group', 'seg_1', 'seg_2', 'seg_3', 'series']
+RAW_FIELDS = RAW_TEXT + RAW_NUMBER + ['probability'] + RAW_DATE + CLASSIFICATIONS
+RAW_TEXT = RAW_TEXT + CLASSIFICATIONS
 # The documented fingerprint field order is this list; the report prints it from here, never from a copy.
 FINGERPRINT_FIELDS = list(RAW_FIELDS)
 STAGE_MEMBERS = {'Won': ['Won', 'Rollout Started', 'Rollout Finished'], 'Open': ['Identified', 'Qualified', 'Negotiation'], 'Lost': ['Dropped', 'Lost']}
-SKU_LEVEL_TEXT = ['gscm_product_group_new', 'pet_name', 'amount_converted_currency']
+SKU_LEVEL_TEXT = ['gscm_product_group_new', 'pet_name', 'amount_converted_currency'] + CLASSIFICATIONS
 OPPORTUNITY_TEXT = [f for f in RAW_TEXT if f not in ('opportunity_no', 'product_code') and f not in SKU_LEVEL_TEXT]
 ATTRIBUTES = ['first_channel', 'age', 'comment', 'deal_size_on_pricing_date_usd']
 CONFLICT_FIELDS = [f for f in RAW_TEXT[2:] if f not in ('amount_converted_currency', 'opp_amount_converted_currency')] + [
@@ -374,6 +376,10 @@ def stage_filter_matches(value, op, target):
 def row_matches(row, clause, grain, source):
     field, op, target = clause['field'], clause['op'], clause['value']
     value = value_of(row, field, grain, source)
+    if field in CLASSIFICATIONS and op in ('eq', 'ne', 'in'):
+        fold = lambda v: v.casefold() if isinstance(v, str) else v
+        value = fold(value)
+        target = [fold(v) for v in target] if isinstance(target, list) else fold(target)
     if field == 'stage':
         return stage_filter_matches(value, op, target)
     if field == 'first_channel' and row.get('first_channel_values'):

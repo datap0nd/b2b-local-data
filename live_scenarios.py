@@ -8,7 +8,7 @@ from collections import Counter
 from decimal import Decimal
 from acceptance_suite import STEPS as LEGACY, step, table, metric, chart, F, CLARIFY, SUMMARY_DEFAULT, DETAIL_DEFAULT
 
-VERSION = '4.0.0'
+VERSION = '5.0.0'
 TARGETS = {'continuity': 40, 'filters': 35, 'calculations': 35, 'charts': 35,
            'tables': 25, 'ambiguity': 15, 'presentation': 15}
 SCENARIOS = []
@@ -79,7 +79,13 @@ def remaining(category):
     return TARGETS[category] - sum(s['category'] == category for s in SCENARIOS)
 
 
-filter_cases = []
+filter_cases = [
+    turn('Show only Smart product rows.', table('sku', filters=[F('biz_group', 'eq', 'SMART')]), needs=('smart_products',)),
+    turn('Show only current-generation flagship product rows.', table('sku', filters=[F('seg_3', 'eq', 'S(N)')]), needs=('current_flagship',)),
+    turn('Show only previous-generation flagship product rows.', table('sku', filters=[F('seg_3', 'eq', 'S(N-1)')]), needs=('previous_flagship',)),
+    *[turn(f'Show product rows with {label} equal to "{{classification_{field}}}".', table('sku', filters=[F(field, 'eq', '{classification_' + field + '}')]))
+      for field, label in [('seg_1', 'segment 1'), ('seg_2', 'segment 2'), ('series', 'series')]],
+]
 for field, label in [('close_date', 'close date'), ('close_month', 'close month'), ('created_date', 'created date'), ('last_modified_date', 'last modification date')]:
     for description, op, value in [('before 1 January 2026', 'lt', '2026-01-01'), ('on or after 1 January 2026', 'ge', '2026-01-01'), ('missing', 'eq', None)]:
         filter_cases.append(turn(f'Show opportunities with {label} {description}.', table(filters=[F(field, op, value)])))
@@ -90,7 +96,8 @@ for label, field, value in [('probability', 'probability', Decimal('0.5')), ('qu
 filter_cases += [turn('Show Open opportunities owned by {owner_a}.', table(filters=[F('stage', 'group', 'Open'), F('opportunity_owner', 'eq', '{owner_a}')]))]
 for t in filter_cases[:remaining('filters')]: add('filters', t['title'], [t])
 
-calc_cases = []
+calc_cases = [turn(f'Count distinct opportunities by {label}, using matching product rows.', metric('sku', group=[field], measures=['opportunity_count']), needs=('classification_' + field,))
+              for field, label in [('biz_group', 'business group'), ('seg_1', 'segment 1'), ('seg_2', 'segment 2'), ('seg_3', 'segment 3'), ('series', 'series')]]
 for grain, noun in [('opportunity', 'whole opportunities'), ('sku', 'opportunity/product rows')]:
     for field, label in [('stage_group', 'stage group'), ('opportunity_owner', 'owner'), ('type', 'opportunity type'), ('first_channel', 'first channel')]:
         for measure, words in [('opportunity_count', 'distinct opportunity count'), ('quantity', 'total quantity'), ('sku_count', 'opportunity/product pair count')]:
@@ -100,14 +107,15 @@ for measure, words in [('amount', 'amount'), ('deal_size', 'deal size in USD'), 
         calc_cases.append(turn(f'For whole {stage} opportunities, show total {words}.', metric('opportunity', [F('stage', 'group', stage)], measures=[measure]), needs=('single_currency',) if measure == 'amount' else ()))
 for t in calc_cases[:remaining('calculations')]: add('calculations', t['title'], [t])
 
-chart_cases = []
+chart_cases = [turn(f'Show a bar chart of matching product quantity by {label}.', chart('bar', 'sku', group=[field], measures=['quantity']), needs=('classification_' + field,))
+               for field, label in [('biz_group', 'business group'), ('seg_1', 'segment 1'), ('seg_2', 'segment 2'), ('seg_3', 'segment 3'), ('series', 'series')]]
 for kind in ['bar', 'line', 'area']:
     for field, label in [('stage_group', 'stage group'), ('opportunity_owner', 'owner'), ('close_date', 'close date'), ('created_date', 'created date')]:
         for measure, words in [('opportunity_count', 'distinct opportunity count'), ('quantity', 'total quantity'), ('sku_count', 'product pair count')]:
             chart_cases.append(turn(f'Create a {kind} chart of {words} by {label} at whole-opportunity grain.', chart(kind, 'opportunity', group=[field], measures=[measure])))
 for t in chart_cases[:remaining('charts')]: add('charts', t['title'], [t], ['chart-data', 'resize'])
 
-table_cases = []
+table_cases = [turn('Show product rows including business group, segment 1, segment 2, segment 3 and series.', table('sku', include=['biz_group', 'seg_1', 'seg_2', 'seg_3', 'series']), needs=('classification_series',))]
 for grain, fields, label in [
     ('opportunity', ['subsidiary_subsidiary_code', 'division', 'business_location'], 'subsidiary code, division and business location'),
     ('opportunity', ['biz_focus', 'sales_type_detail', 'type'], 'business focus, sales type detail and opportunity type'),

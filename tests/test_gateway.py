@@ -28,13 +28,13 @@ class GatewayTests(unittest.TestCase):
         repo,connection=self.repository()
         with patch.object(repo,'_read',return_value=pd.DataFrame(demo_rows(),dtype=object)) as read:
             views=repo.load()
-        self.assertEqual(views.source,'postgres');self.assertEqual(views.source_name,'bi_reporting.b2b_project')
+        self.assertEqual(views.source,'postgres');self.assertEqual(views.source_name,'bi_reporting.b2b_project_segmented')
         self.assertEqual(read.call_count,1);self.assertEqual(read.call_args.args[2]['first_channel'],'1st_channel')
         self.assertEqual(len(views.opportunity),3)
         statements=self.statements(connection)
         self.assertIn('SET TRANSACTION READ ONLY',statements)
         self.assertTrue(any('statement_timeout' in s for s in statements))
-        self.assertTrue(any('information_schema.columns' in s for s in statements))
+        self.assertTrue(any('pg_catalog.pg_attribute' in s for s in statements))
         self.assertFalse(any('_v' in s or 'schema_version' in s for s in statements))
     def test_select_quotes_and_aliases_every_column(self):
         repo,connection=self.repository()
@@ -42,7 +42,7 @@ class GatewayTests(unittest.TestCase):
         views=repo.load()
         select=next(s for s in self.statements(connection) if 'LIMIT :cap' in s)
         self.assertIn('CAST("1st_channel" AS text) AS "first_channel"',select);self.assertIn('CAST("deal_size_on_pricing_date_usd" AS text) AS "deal_size_on_pricing_date_usd"',select)
-        self.assertIn('FROM "bi_reporting"."b2b_project" LIMIT :cap',select);self.assertEqual(select.count('CAST('),30);self.assertEqual(select.count(') AS "'),30)
+        self.assertIn('FROM "bi_reporting"."b2b_project_segmented" LIMIT :cap',select);self.assertEqual(select.count('CAST('),35);self.assertEqual(select.count(') AS "'),35)
         self.assertTrue(views.opportunity.empty)
     def test_missing_source_columns_are_reported_before_reading(self):
         repo,connection=self.repository([c for c in SQL_COLUMNS.values() if c not in ('1st_channel','comment')])

@@ -16,7 +16,7 @@ from test_data_grain import EXPORT_HEADERS
 
 def write_export(path,rows,headers=None,encoding='utf-8-sig',quote_first_channel=True):
     """Write rows with export-style headers; the 1st Channel header is quoted the way exports quote it."""
-    headers=headers or EXPORT_HEADERS
+    headers=headers or (SQL_COLUMNS | EXPORT_HEADERS)
     with Path(path).open('w',encoding=encoding,newline='') as stream:
         stream.write(','.join('"'+headers[name]+'"' if quote_first_channel and name=='first_channel' else headers[name] for name in RAW_COLUMNS)+'\r\n')
         writer=csv.writer(stream)
@@ -76,7 +76,7 @@ class CsvSourceTests(unittest.TestCase):
         with self.assertRaises(AppError) as error:DataRepository(self.settings()).load()
         self.assertIn('does not exist',str(error.exception));self.assertIn('B2B_CSV_PATH',str(error.exception))
         path=self.export()
-        with path.open('a',encoding='utf-8',newline='') as stream:stream.write('OPP-9,SKU-9,extra,'+','.join(['x']*30)+'\n')
+        with path.open('a',encoding='utf-8',newline='') as stream:stream.write('OPP-9,SKU-9,extra,'+','.join(['x']*len(RAW_COLUMNS))+'\n')
         with self.assertRaises(AppError) as error:DataRepository(self.settings()).load()
         self.assertIn('malformed',str(error.exception))
         path.write_text('',encoding='utf-8')

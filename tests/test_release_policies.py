@@ -86,7 +86,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual((settings.get('RO_SQL_USER'),settings.get('RO_SQL_PW')),('reader','pw'))
         self.assertEqual((settings.get('LLM_API_URL'),settings.get('LLM_API_KEY'),settings.get('LLM_MODEL_NAME'),settings.get('AI_PROVIDER')),('http://10.20.30.40:8000/v1','k','Qwen/Qwen3.8-27B','openai_compatible'))
         self.assertIn('10.20.30.40',settings.get('B2B_LLM_ALLOWED_HOSTS'))
-        self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project');self.assertEqual(settings.get('DB_SSL'),'prefer')
+        self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project_segmented');self.assertEqual(settings.get('DB_SSL'),'prefer')
         with patch.dict('os.environ',environment|{'DB_SSL':'true'},clear=True):self.assertEqual(Settings.load(self.root).get('DB_SSL'),'true')
         with patch.dict('os.environ',{'DB_KIND':'demo'},clear=True):self.assertEqual(Settings.load(self.root).get('DB_SSL'),'prefer')
         with patch.dict('os.environ',{'DB_KIND':'demo','DB_SSL':'maybe'},clear=True),self.assertRaises(AppError):Settings.load(self.root)
@@ -160,7 +160,7 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict('os.environ',{},clear=True),self.assertRaises(AppError):Settings.load(self.root)
         (self.root/'.env').write_text('PGURL=database.example:5432/postgres\nB2B_CSV_PATH=exports/salesforce.csv\n')
         with patch.dict('os.environ',{},clear=True):settings=Settings.load(self.root)
-        self.assertEqual(settings.get('DB_KIND'),'postgres');self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project')
+        self.assertEqual(settings.get('DB_KIND'),'postgres');self.assertEqual(settings.source_label,'PostgreSQL bi_reporting.b2b_project_segmented')
     def test_rollback_preserves_local_data_and_checks_containment(self):
         release=self.root/'releases/previous';release.mkdir(parents=True);(release/'run.py').write_text('')
         runtime=self.root/'runtime/python';runtime.mkdir(parents=True);(runtime/'python.exe').write_text('')

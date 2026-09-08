@@ -44,6 +44,14 @@ class PostgreSQLParityTests(unittest.TestCase):
         self.cursor.execute(f'DROP SCHEMA {self.schema} CASCADE')
         self.cursor.execute(f'DROP ROLE IF EXISTS {self.role}')
         self.connection.close();self.temp.cleanup()
+    def test_segmented_materialized_view_is_discovered_and_read(self):
+        self.cursor.execute(f"UPDATE {self.schema}.b2b_project SET biz_group='SMART', seg_1='FLAGSHIP', seg_2='S', seg_3='S(N)', series='Example series'")
+        self.cursor.execute(f'CREATE MATERIALIZED VIEW {self.schema}.b2b_project_segmented AS SELECT * FROM {self.schema}.b2b_project')
+        settings = Settings(self.home, {'DB_KIND':'postgres', 'B2B_RAW_TABLE':self.schema+'.b2b_project_segmented'})
+        raw, source, relation = DataRepository(settings, self.engine()).load_raw()
+        self.assertEqual((source, relation), ('postgres', self.schema+'.b2b_project_segmented'))
+        self.assertEqual(set(raw['seg_3']), {'S(N)'})
+        self.assertEqual(len(raw), len(self.rows))
     def engine(self,restricted=False):
         url=URL.create('postgresql+pg8000',username=self.options['user'],password=self.options['password'],host=self.options['host'],port=self.options['port'],database=self.options['database'])
         engine=create_engine(url,isolation_level='REPEATABLE READ',connect_args={'ssl_context':False},hide_parameters=True)

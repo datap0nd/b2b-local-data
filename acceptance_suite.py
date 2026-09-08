@@ -12,7 +12,7 @@ from reference_evaluator import STAGE_MEMBERS, r_number
 
 SUITE_VERSION = '3.0.0'
 CURRENCY_FIELDS = ('opp_amount_converted_currency', 'amount_converted_currency')
-PRODUCT_FIELDS = {'product_code', 'pet_name', 'gscm_product_group_new', 'amount_converted_currency', 'sku_amount', 'exported_opp_amount_value_count'}
+PRODUCT_FIELDS = {'product_code', 'pet_name', 'gscm_product_group_new', 'amount_converted_currency', 'sku_amount', 'exported_opp_amount_value_count', 'biz_group', 'seg_1', 'seg_2', 'seg_3', 'series'}
 # Contract default columns, copied from the published query contract.
 SUMMARY_DEFAULT = ['opportunity_no', 'opportunity_name', 'end_customer', 'opportunity_owner', 'stage', 'close_date', 'product_codes', 'product_names',
                    'quantity', 'opportunity_amount', 'sku_count', 'opp_amount_converted_currency', 'has_amount_discrepancy', 'has_quality_warning']
@@ -354,6 +354,12 @@ def select_witnesses(source, records):
         n += 1
         candidate = f'OPP-NONE-{n:04d}'
     witnesses['nonexistent'] = candidate
+    for field in ('biz_group', 'seg_1', 'seg_2', 'seg_3', 'series'):
+        values = sorted({str(row[field]) for row in skus if row.get(field)}, key=lambda v: (v.casefold(), v))
+        coverage['classification_' + field] = bool(values)
+        if values: witnesses['classification_' + field] = values[0]
+    for name, field, value in [('smart_products', 'biz_group', 'SMART'), ('current_flagship', 'seg_3', 'S(N)'), ('previous_flagship', 'seg_3', 'S(N-1)')]:
+        coverage[name] = any(str(row.get(field) or '').casefold() == value.casefold() for row in skus)
     coverage['twenty_plus'] = len(opps) >= 21
     coverage['ten_plus'] = len(opps) >= 10
     coverage['probability_high'] = any(o['probability'] is not None and o['probability'] >= Decimal('0.75') for o in opps)
@@ -467,12 +473,13 @@ def match_filters(expected, clauses, witnesses):
             if covered == (date(value, 1, 1), date(value, 12, 31)):
                 taken = same
         elif op == 'eq':
+            fold = lambda v: v.casefold() if field in ('biz_group', 'seg_1', 'seg_2', 'seg_3', 'series') and isinstance(v, str) else v
             for c in remaining:
                 if c['field'] != field:
                     continue
                 if value is None and ((c['operator'] == 'eq' and c['value'] is None) or (c['operator'] == 'in' and c['value'] == [None])):
                     taken = [c]
-                elif value is not None and ((c['operator'] == 'eq' and same_value(c['value'], value)) or (c['operator'] == 'in' and len(c['value']) == 1 and same_value(c['value'][0], value))):
+                elif value is not None and ((c['operator'] == 'eq' and same_value(fold(c['value']), fold(value))) or (c['operator'] == 'in' and len(c['value']) == 1 and same_value(fold(c['value'][0]), fold(value)))):
                     taken = [c]
                 if taken:
                     break

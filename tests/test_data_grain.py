@@ -14,7 +14,7 @@ EXPORT_HEADERS = {'opportunity_no':'Opportunity No.','product_code':'Product Cod
     'opp_amount_converted_currency':'Opportunity Amount (converted) Currency','rollout_period_to':'Rollout Period To','rollout_period_from':'Rollout Period From',
     'first_channel':'1st Channel','comment':'Comment','quantity':'Quantity','amount_converted':'Amount (converted)','opp_amount_converted':'Opportunity Amount (converted)',
     'probability':'Probability (%)','age':'Age','deal_size_on_pricing_date_usd':'Deal Size on Pricing Date (USD)','close_month':'Close Month','close_date':'Close Date',
-    'created_date':'Created Date','last_modified_date':'Last Modified Date'}
+    'created_date':'Created Date','last_modified_date':'Last Modified Date', 'biz_group':'Business Group', 'seg_1':'Segment 1', 'seg_2':'Segment 2', 'seg_3':'Segment 3', 'series':'Series'}
 
 
 class DataGrainTests(unittest.TestCase):
@@ -98,9 +98,9 @@ class DataGrainTests(unittest.TestCase):
         self.assertIn('deal_size_on_pricing_date_usd',views.opportunity.columns)
 
     def test_all_thirty_columns_are_mapped_once(self):
-        self.assertEqual(len(SOURCE_FIELDS),30)
-        self.assertEqual(len(set(RAW_COLUMNS)),30)
-        self.assertEqual(len(set(SQL_COLUMNS.values())),30)
+        self.assertEqual(len(SOURCE_FIELDS),35)
+        self.assertEqual(len(set(RAW_COLUMNS)),35)
+        self.assertEqual(len(set(SQL_COLUMNS.values())),35)
         self.assertEqual(SQL_COLUMNS['first_channel'],'1st_channel')
         for name in ('age','comment','deal_size_on_pricing_date_usd'):
             self.assertEqual(SQL_COLUMNS[name],name)

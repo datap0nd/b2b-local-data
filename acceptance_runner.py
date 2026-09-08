@@ -236,7 +236,7 @@ class AcceptanceRunner:
             if any(r['status'] == 'running' for r in self.snapshots.values()):
                 raise AppError('A test run is already in progress. Cancel it or wait for it to finish.')
             started = monotonic()
-            relation = self.settings.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project'
+            relation = self.settings.get('B2B_RAW_TABLE') or 'bi_reporting.b2b_project_segmented'
             if replay_from:
                 self._load(owner, replay_from)
                 records, payload = self.load_snapshot(replay_from)

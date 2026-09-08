@@ -17,7 +17,7 @@ import pandas as pd
 from pydantic import ValidationError
 
 from app_config import AppError
-from data_layer import BOOL_FIELDS, DATE_FIELDS, NUMBER_FIELDS, OPPORTUNITY_COLUMNS, SKU_COLUMNS, STAGE_GROUPS, present, sql_sum, stage_group
+from data_layer import BOOL_FIELDS, CLASSIFICATION_FIELDS, DATE_FIELDS, NUMBER_FIELDS, OPPORTUNITY_COLUMNS, SKU_COLUMNS, STAGE_GROUPS, present, sql_sum, stage_group
 from query_models import ColumnMode, ColumnSelection, ContextAction, FilterClause, Grain, Intent, Measure, Presentation, QueryPlanV1, QueryPlanV2, ResultKind, adapt_v1
 import re
 
@@ -345,6 +345,9 @@ def filter_mask(frame,clause):
     op=clause.operator.value
     raw=clause.value
     values=[typed_value(clause.field,v) for v in (raw if isinstance(raw,list) else [raw])]
+    if clause.field in CLASSIFICATION_FIELDS and op in ('eq', 'ne', 'in'):
+        series = series.map(lambda value: value.casefold() if isinstance(value, str) else value)
+        values = [value.casefold() if isinstance(value, str) else value for value in values]
     # Canonical stakeholder groups expand when used against stage, including IN.
     if clause.field=='stage' and op in ('eq','ne','in'):
         values=[stage for value in values for stage in STAGE_GROUPS.get(value,(value,))]
@@ -760,6 +763,10 @@ columns (rows only): mode default shows the established columns; mode include ad
 Opportunity fields (grain opportunity): {OPPORTUNITY_COLUMNS}. SKU fields (grain opportunity_sku): {SKU_COLUMNS}. Both also support stage_group.
 Default columns: {DEFAULT_COLUMNS[Grain.OPPORTUNITY]} at opportunity grain; {DEFAULT_COLUMNS[Grain.OPPORTUNITY_SKU]} at opportunity_sku grain. Never list them yourself and never list the business keys (opportunity_no, product_code): they are always included.
 Product-level fields (product_code, pet_name, gscm_product_group_new, amount_converted_currency, sku_amount) exist only at opportunity_sku grain.
+Product classifications from the segmented source are also product-level fields: biz_group (business group/top-level product category), seg_1 (segment 1), seg_2 (segment 2), seg_3 (segment 3), series. They are joined by pet_name. The hierarchy runs biz_group -> seg_1 -> seg_2 -> seg_3 -> series -> pet_name/product_code. Existing division is a separate source field; do not substitute biz_focus, division, or gscm_product_group_new for these classifications.
+User-supplied vocabulary examples (not an exhaustive inventory): biz_group SMART, FEATURE, ACCESSORY, TABLET, WEARABLE; seg_1 A SERIES, ACCESSORY, BAND, FEATURE, FLAGSHIP, TABLET; seg_2 ACCESSORY, BAND, ENTRY, FEATURE, HIGH, MID, S, TABL_ENTRY, TAB_MASS; seg_3 A0x, A1x, A2x, A3x, S(N), S(N-1); series A SERIES CASE, A0x, A1x, A3x. Treat stored labels literally, case-insensitive for matching, preserving punctuation. S(N) is current-generation flagship and S(N-1) is previous-generation flagship; never calculate a year or infer a specific SKU from these relative labels.
+"Smart products" means biz_group eq SMART; "current-generation flagship" means seg_3 eq S(N); "previous-generation flagship" means seg_3 eq S(N-1). "By segment 1/2/3" groups by seg_1/seg_2/seg_3; "by series" groups by series. A bare "segment" without a prior level is ambiguous: ask which level. Do not invent a hierarchy relationship or assume a listed value exists in the current snapshot.
+For classification breakdowns choose opportunity_sku grain. Distinct opportunity counts by classification can overlap across groups. A filter for whole opportunities containing Smart products uses opportunity grain, biz_group eq SMART and includes all products of those opportunities; a matching-Smart-products quantity/amount uses opportunity_sku grain and only matching products. Follow-up drilldowns replace the grouping level but retain explicit parent filters; generation switches replace the seg_3 restriction. Never repeat whole-opportunity deal_size totals by classification.
 Amount definitions: measure amount is the converted amount (opportunity_amount = the sum of the opportunity's product amounts at opportunity grain; sku_amount per product row at opportunity_sku grain). Amounts are in the currency named by opp_amount_converted_currency (opportunity) or amount_converted_currency (SKU).
 Currency: when the person names a currency, always emit an eq filter on the currency field of the grain, even if every record already uses that currency. Totals across several currencies are rejected; group by the currency field or filter to one.
 first_channel supports source channel membership filters. An opportunity with several memberships displays Multiple channels and groups in that explicit bucket; never select one arbitrarily. Age (supplied days, never recalculated or summed), comment, and deal_size_on_pricing_date_usd are opportunity attributes available at both grains.

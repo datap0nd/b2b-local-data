@@ -146,7 +146,7 @@ class PostgresModeTests(unittest.TestCase):
     def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
     def test_previews_are_not_offered_for_the_shared_database(self):
         status=self.local.request('/api/status')
-        self.assertEqual((status['database'],status['source'],status['previews']),('postgres','PostgreSQL bi_reporting.b2b_project',False))
+        self.assertEqual((status['database'],status['source'],status['previews']),('postgres','PostgreSQL bi_reporting.b2b_project_segmented',False))
         with self.assertRaises(HTTPError) as error:self.local.request('/api/sample',{'view':'summary'})
         self.assertEqual(error.exception.code,400)
 

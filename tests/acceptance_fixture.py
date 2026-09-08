@@ -45,6 +45,9 @@ def synthetic_records(seed=7,opportunities=60,years=None):
                 parent+=amount
                 lines.append(dict.fromkeys(RAW_COLUMNS)|{'opportunity_no':opp,'product_code':product,'pet_name':product+' unit','gscm_product_group_new':'Group '+product[2],
                     'subsidiary_subsidiary_code':f'{n%3:03d}','opportunity_name':f'Project {n}','end_customer':customer,'stage':stage,'opportunity_owner':owner,'type':TYPES[n%3],
+                    'biz_group':'SMART' if product in PRODUCTS[:3] else 'ACCESSORY', 'seg_1':'FLAGSHIP' if product in PRODUCTS[:2] else 'A SERIES',
+                    'seg_2':'S' if product in PRODUCTS[:2] else 'ENTRY', 'seg_3': 'S(N)' if product == PRODUCTS[0] else 'S(N-1)' if product == PRODUCTS[1] else 'A0x',
+                    'series': 'S current' if product == PRODUCTS[0] else 'S previous' if product == PRODUCTS[1] else 'A0x',
                     'biz_focus':'Focus','business_location':'Berlin','division':'Div','sales_type_detail':'Detail','quantity':str(qty),'opp_amount_converted':str(amount),
                     'amount_converted_currency':'EUR','opp_amount_converted_currency':'EUR','probability':probability,'close_date':close_date,'close_month':close_month,
                     'created_date':created,'last_modified_date':modified,'first_channel':'Partner' if n%2 else 'Direct','age':str(n%90),'comment':f'Note {n}',
