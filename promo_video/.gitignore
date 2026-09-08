@@ -4,3 +4,4 @@ __pycache__/
 silent.mp4
 edit/
 node_modules/
+!captures/fictional-result.csv

@@ -1,0 +1,3 @@
+﻿"opportunity_no","opportunity_name","end_customer","opportunity_amount","stage","opportunity_owner","opp_amount_converted_currency"
+"DEMO-1","Demo project A","Example customer 1","35000","Negotiation","Demo owner","EUR"
+"DEMO-2","Demo project B","Example customer 2","25000","Negotiation","Demo owner","EUR"
