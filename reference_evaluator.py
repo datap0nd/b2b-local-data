@@ -516,7 +516,8 @@ def evaluate(source, spec):
     columns = group_fields + measures
     order = spec.get('sort') or [(f, True) for f in group_fields]
     ordered = sort_rows(records, order, lambda record, field: record.get(field))
-    limit = spec.get('limit') or 1000
+    # Complete aggregate groups are public unless the question requests a limit.
+    limit = spec.get('limit') or len(ordered)
     return {'columns': columns, 'keys': group_fields, 'rows': ordered[:limit], 'total': len(ordered), 'totals': None,
             'digest': digest_rows(ordered, columns), 'limit': limit, 'kinds': {c: column_kind(c) for c in columns}}
 

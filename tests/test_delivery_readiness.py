@@ -372,7 +372,7 @@ class RunnerAccountingTests(unittest.TestCase):
         self.assertTrue(any('T35' in r for r in status['unqualified_reasons']))
         self.assertIn('needs manual review', runner.report('alice', run_id))
 
-    def test_data_failure_blocks_dependent_conversation_steps(self):
+    def test_data_failure_keeps_valid_context_for_followups(self):
         runner, _ = self.runner()
         original = QueryExecutor.execute
         target = STEP_INDEX['A1']; state = {'tamper': False}
@@ -384,7 +384,8 @@ class RunnerAccountingTests(unittest.TestCase):
             run_id = self.drive(runner, before_step=lambda index: state.update(tamper=(index == target)))
         steps = {s['id']: s for s in runner.status('alice', run_id)['run']['steps']}
         self.assertEqual(steps['A1']['status'], 'fail'); self.assertTrue(steps['A1']['interpretation']['ok']); self.assertFalse(steps['A1']['data_ok'])
-        for later in ('A2', 'A3', 'A4', 'A5', 'A6'): self.assertEqual(steps[later]['status'], 'blocked')
+        for later in ('A2', 'A3', 'A4', 'A5', 'A6'): self.assertEqual(steps[later]['status'], 'pass')
+        self.assertFalse(runner.status('alice', run_id)['full_pass'])
         for unaffected in ('B1', 'C6', 'T33'): self.assertEqual(steps[unaffected]['status'], 'pass')
 
     def test_parity_failure_marks_the_run_unqualified_with_keyed_diagnostics(self):

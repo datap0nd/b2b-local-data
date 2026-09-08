@@ -491,8 +491,10 @@ class AcceptanceRunner:
                                                for view, wanted in supporting_expected.items()
                                                if isinstance(views.get(view), dict) and 'rows' in views[view]}
         record['status'] = 'pass' if ok and comparison['ok'] else 'fail'
-        if record['status'] != 'pass':
-            self._block_followups(run, index, 'An earlier turn of this conversation failed its interpretation or data check.')
+        # A valid interpreted answer still establishes context even when its
+        # arithmetic/evidence assertion fails. Keep testing subsequent behavior.
+        if not ok:
+            self._block_followups(run, index, 'An earlier turn did not establish the expected query context.')
 
     def _record_diagnostics(self, run, record, diagnostics):
         record['attempts'] = list(diagnostics.get('attempts') or [])
@@ -524,6 +526,10 @@ class AcceptanceRunner:
         if not conversation:
             return
         for later in range(index + 1, len(self.steps)):
+            if self.steps[later]['conversation'] == conversation and self.steps[later].get('independent'):
+                # Run the authored reset in the same conversation; it must
+                # demonstrate recovery instead of silently receiving fresh state.
+                break
             if self.steps[later]['conversation'] == conversation and run['steps'][later]['status'] == 'pending':
                 run['steps'][later]['status'], run['steps'][later]['error'] = 'blocked', reason
 
@@ -631,7 +637,7 @@ class AcceptanceRunner:
             if s.get('scenario_id') not in ids: continue
             compact = {k: s.get(k) for k in ('id','scenario_id','turn_number','prompt','status','expected','interpretation','returned_plan','effective_plan','clarification','error','recovered','result')}
             data = s.get('data') or {}
-            compact['data'] = {k: data.get(k) for k in ('ok','checks','counts','differences')}
+            compact['data'] = {k: data.get(k) for k in ('ok','checks','counts','differences','supporting')}
             steps.append(compact)
         return {'run_id': run_id, 'identity': run['identity'], 'counts': self.counts(run),
                 'scenario_count': len(run.get('scenarios', [])), 'scenarios': scenarios,

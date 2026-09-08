@@ -10,6 +10,7 @@ import {Sidebar} from '@/components/Sidebar';
 import {useFreshness} from '@/useFreshness';
 import {CHECKS, type Harness, type Observation} from './checks';
 import {captureElement, scenarioPng} from './evidence';
+import {TestVerdict} from './TestVerdict';
 import type {AskResponse, ConversationTurn, PresentationName, TablePayload, ViewName} from '@/types';
 
 interface Step {id: string; scenario_id: string; turn_number: number; prompt: string | null; title: string; status: string; error: string | null; browser_checks: number[]; ui_actions: string[]; data_ok?: boolean; data?: {ok: boolean; differences?: unknown[]}; result?: {total_rows: number; rows: unknown[]; expected?: {total_rows: number; rows: unknown[]}}; interpretation?: {ok: boolean; problems: string[]}; expected: string}
@@ -34,6 +35,7 @@ export default function AcceptancePanel({onClose}: {onClose: () => void}) {
   const turnsRef = useRef<ConversationTurn[]>([]);
   const [expanded, setExpanded] = useState<string | number | null>(null);
   const [draft, setDraft] = useState('');
+  const [verdict, setVerdict] = useState<Step | null>(null);
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
   const pauseRef = useRef(false), stopRef = useRef(false), active = useRef(false);
@@ -184,7 +186,7 @@ export default function AcceptancePanel({onClose}: {onClose: () => void}) {
         for (const stepId of scenario.step_ids) {
           const index = state.run.steps.findIndex(s => s.id === stepId);
           let step = state.run.steps[index];
-          await checkpoint(); setDraft(step.prompt ?? ''); setMessage(`${scenario.id} · turn ${step.turn_number}: ${step.prompt ?? step.title}`); await settled();
+          await checkpoint(); setVerdict(null); setDraft(step.prompt ?? ''); setMessage(`${scenario.id} · turn ${step.turn_number}: ${step.prompt ?? step.title}`); await settled();
           setConversation([...turnsRef.current, {id: step.id, question: step.prompt ?? step.title, assistant: {status: 'pending'}}]); setDraft(''); await frame();
           let payload: AskResponse | null;
           if (state.next_step !== null && index >= state.next_step) {
@@ -203,7 +205,7 @@ export default function AcceptancePanel({onClose}: {onClose: () => void}) {
             } else notes.push('blocked: scrollback requires an overflowing conversation.');
           }
           const completed = responseTurn(step, payload);
-          updateTurn(step.id, () => completed); setStatus(state); await settled();
+          updateTurn(step.id, () => completed); setVerdict(step); setStatus(state); await settled();
           if (readingPosition !== null) {
             const scroller = surface.current!.querySelector<HTMLElement>('[data-testid="conversation"]')!;
             const latest = surface.current!.querySelector<HTMLButtonElement>('[data-testid="new-answer"]');
@@ -272,7 +274,8 @@ export default function AcceptancePanel({onClose}: {onClose: () => void}) {
         <Button size="sm" variant="ghost" disabled={running} onClick={onClose}>Exit test</Button>
         {captureRetry && <Button size="sm" onClick={() => void retryRef.current?.().then(() => { setCaptureRetry(false); retryRef.current = null; setMessage('PNG saved. Resume run to continue.'); }).catch(e => setMessage(String(e)))}>Retry PNG save</Button>}
       </div>
-      <div className="border-b border-line bg-canvas px-3 py-2 text-xs"><strong data-testid="test-case">{current}</strong><p role="status">{message}</p><p data-testid="test-progress">{status ? `Passed ${status.counts.passed} · Failed ${status.counts.failed} · Blocked ${status.counts.blocked} · PNGs ${status.run.scenarios.filter(s => s.png).length}/200` : 'Normal saved chats are untouched.'}</p></div>
+      <div className="border-b border-line bg-canvas px-3 py-2 text-xs"><strong data-testid="test-case">{current}</strong><p role="status">{message}</p><p data-testid="test-progress">{status ? `Passed ${status.counts.passed} · Failed ${status.counts.failed} · Review ${status.counts.review ?? 0} · Blocked ${status.counts.blocked} · PNGs ${status.run.scenarios.filter(s => s.png).length}/200` : 'Normal saved chats are untouched.'}</p></div>
+      {verdict && <TestVerdict step={verdict} />}
       <div ref={surface} className="flex min-h-0 flex-1 flex-col" data-testid="test-result">
         {expandedTurn?.assistant.status === 'answer' ? <ExpandedAnalysis answer={expandedTurn.assistant.answer} shown={expandedTurn.assistant.shown} view={expandedTurn.assistant.view} presentation={expandedTurn.assistant.presentation} onView={v => onView(expandedTurn, v)} onPresentation={p => onPresentation(expandedTurn, p)} onExplore={noop} onSuggestion={noop} onClose={() => setExpanded(null)} /> :
           <Conversation turns={turns} empty={!turns.length} onView={onView} onPresentation={onPresentation} onExplore={t => setExpanded(t.id)} onSuggestion={text => setMessage(`Suggestion: ${text}. Authored tests control the next prompt.`)} onRunWithCurrent={noop} />}

@@ -22,9 +22,9 @@ AMOUNT_COLUMN = {'opportunity': 'opportunity_amount', 'sku': 'sku_amount'}
 ALL_MEASURES = ['amount', 'quantity', 'opportunity_count', 'sku_count']
 
 
-def step(id, title, prompt, expect, view='auto', conversation=None, witnesses=(), browser=(), needs=(), behavior=''):
+def step(id, title, prompt, expect, view='auto', conversation=None, witnesses=(), browser=(), needs=(), behavior='', independent=False):
     return {'id': id, 'title': title, 'prompt': prompt, 'view': view, 'conversation': conversation, 'expect': expect,
-            'witnesses': list(witnesses), 'browser_checks': list(browser), 'needs': list(needs), 'behavior': behavior}
+            'witnesses': list(witnesses), 'browser_checks': list(browser), 'needs': list(needs), 'behavior': behavior, 'independent': independent}
 
 
 def table(grain='opportunity', filters=(), columns=None, sort=None, limit=None, include=None):
@@ -126,7 +126,7 @@ STEPS = [
     step('B3', 'Change the chart measure', 'Change the chart measure to quantity.', chart('bar', filters=[F('opportunity_owner', 'eq', '{owner_c}')], group=['stage_group'], measures=['quantity']), conversation='B', behavior='Same grouping and filter, quantity only.'),
     step('B4', 'Grouped values as a table', 'Show those exact grouped values as a table instead of a chart.', metric(filters=[F('opportunity_owner', 'eq', '{owner_c}')], group=['stage_group'], measures=['quantity']), conversation='B', behavior='Grouped metric rows equal to the chart values.'),
     step('B5', 'Won product rows behind the result', 'Show the detailed Won product rows behind that result.', table('sku', filters=[F('opportunity_owner', 'eq', '{owner_c}'), F('stage', 'group', 'Won')]), view='detail', conversation='B', behavior='Drill-down keeps the owner and adds the Won stage group at SKU grain.'),
-    step('B6', 'Fresh unrestricted summary', 'Start a new question: show a summary of all opportunities without any restriction.', table(), view='summary', conversation='B', behavior='A replace question clears the earlier filters.'),
+    step('B6', 'Fresh unrestricted summary', 'Start a new question: show a summary of all opportunities without any restriction.', table(), view='summary', conversation='B', behavior='A replace question clears the earlier filters.', independent=True),
     # Conversation C: clarification and recovery.
     step('C1', 'Summary filtered to a currency', 'Show a summary of the opportunities in currency {currency}.', table(filters=[F('currency', 'eq', '{currency}')]), view='summary', conversation='C', witnesses=('currency',), browser=(16,)),
     step('C2', 'Unsupported weighted revenue', 'What is the probability-weighted revenue of those opportunities?', CLARIFY, conversation='C', behavior='A clarification that leaves the currency plan active.'),
@@ -162,7 +162,7 @@ STEPS = [
     step('E1', 'Open, typed, closing in 2026', "Show the Open opportunities of type '{type}' with a close date in 2026.", table(filters=[F('stage', 'group', 'Open'), F('type', 'eq', '{type}'), F('close_date', 'year', 2026)]), view='summary', conversation='E', witnesses=('type',), needs=('close_date_2026',)),
     step('E2', 'Remove the type restriction', 'Remove the type restriction.', table(filters=[F('stage', 'group', 'Open'), F('close_date', 'year', 2026)]), conversation='E', behavior='The stage and close-date filters stay.'),
     step('E3', 'Add an owner', 'Now only the ones owned by {owner_a}.', table(filters=[F('stage', 'group', 'Open'), F('close_date', 'year', 2026), F('opportunity_owner', 'eq', '{owner_a}')]), conversation='E', witnesses=('owner_a',), behavior='Stage and date filters are retained; the owner filter is added.'),
-    step('E4', 'Start over', 'Start over: show every opportunity.', table(), view='summary', conversation='E', behavior='A new unrestricted question clears the previous scope.'),
+    step('E4', 'Start over', 'Start over: show every opportunity.', table(), view='summary', conversation='E', behavior='A new unrestricted question clears the previous scope.', independent=True),
 ]
 STEP_INDEX = {s['id']: i for i, s in enumerate(STEPS)}
 

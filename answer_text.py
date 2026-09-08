@@ -51,7 +51,7 @@ def money(value,code=None,decimals=2):
     if value is None: return None
     number=Decimal(str(value))
     quantized=number.quantize(Decimal(1).scaleb(-decimals)) if decimals is not None else number.normalize()
-    text=f'{quantized:,f}' if decimals is not None else (format(quantized,'f') if quantized!=0 else '0')
+    text=f'{quantized:,f}' if quantized!=0 else ('0' if decimals is None else f'{quantized:,.{decimals}f}')
     return f'{text} {code}' if code else text
 
 
