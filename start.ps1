@@ -7,6 +7,23 @@ if (-not $InstallDir -and $PSCommandPath) { $InstallDir = Split-Path -Parent $PS
 if (-not $InstallDir -and $MyInvocation.MyCommand.Path) { $InstallDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $InstallDir) { $InstallDir = (Get-Location).Path }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
+$service = Get-Service -Name 'B2BLocalData' -ErrorAction SilentlyContinue
+if ($service) {
+    if ($service.Status -ne 'Running') {
+        try {
+            Start-Service -Name 'B2BLocalData' -ErrorAction Stop
+            $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(30))
+        } catch {
+            throw 'The B2BLocalData service is installed but stopped. Run update_app.ps1 so it can request Administrator access and repair it.'
+        }
+    }
+    Write-Host 'B2B is already running as a Windows service.' -ForegroundColor Green
+    Write-Host 'Local: http://127.0.0.1:8766'
+    Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+        Where-Object IPv4DefaultGateway |
+        ForEach-Object { Write-Host "Network: http://$($_.IPv4Address.IPAddress):8766" }
+    exit 0
+}
 $pointer = Join-Path $InstallDir 'current.json'
 if (Test-Path -LiteralPath $pointer) {
     $current = Get-Content -LiteralPath $pointer -Raw | ConvertFrom-Json
