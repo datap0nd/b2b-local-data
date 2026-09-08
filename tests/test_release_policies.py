@@ -6,7 +6,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock,patch
 
 from app_config import AppError,ROOT,Settings,read_env,verify_release
 from updater import rollback
@@ -124,6 +125,21 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(manifest['app_version'],'0.7.0');self.assertEqual(manifest['data_schema_version'],3)
         self.assertNotIn('database_schema_version',manifest)
         self.assertEqual((ROOT/'VERSION').read_text().strip(),'0.7.0')
+    def test_windows_service_uses_reviewed_metronome_nssm_binary(self):
+        digest=hashlib.sha256((ROOT/'tools/nssm.exe').read_bytes()).hexdigest()
+        self.assertEqual(digest,'f689ee9af94b00e9e3f0bb072b34caaf207f32dcb4f5782fc9ca351df9a06c97')
+    def test_service_cli_overrides_stale_environment_port_and_host(self):
+        import run_app
+        class ServiceSettings:
+            listen_host='127.0.0.1'
+            def number(self,key,default,**kwargs):return 8765
+            def get(self,key,default=None):return default
+        serve=Mock()
+        modules={'ui_app':SimpleNamespace(create_app=Mock(return_value=object())),'uvicorn':SimpleNamespace(run=serve)}
+        with patch.dict(sys.modules,modules),patch('app_config.verify_release'),patch.object(Settings,'load',return_value=ServiceSettings()),patch.object(sys,'argv',['run.py','--home',str(self.root),'--host','0.0.0.0','--port','8766']):
+            run_app.main()
+        self.assertEqual(serve.call_args.kwargs['host'],'0.0.0.0')
+        self.assertEqual(serve.call_args.kwargs['port'],8766)
     def test_csv_source_configuration(self):
         (self.root/'.env').write_text('DB_KIND=csv\nB2B_CSV_PATH=exports/salesforce.csv\n')
         with patch.dict('os.environ',{},clear=True):settings=Settings.load(self.root)

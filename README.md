@@ -22,10 +22,9 @@ Run from that folder:
 
 ```powershell
 .\setup.ps1
-.\start.ps1
 ```
 
-Run the same `setup.ps1` whenever you want to refresh. The default install location is **the folder containing the script**. An explicit `-InstallDir` or `B2B_INSTALL_ROOT` setting can select a different folder. No Git client, administrator rights, pip, Node.js, or system Python installation is needed.
+Setup requests Administrator access and installs the same NSSM service pattern used by Data Governance/Metronome. B2B runs automatically in the background, restarts after failures and Windows restarts, and listens explicitly on `0.0.0.0:8766`. The default install location is **the folder containing the script**. An explicit `-InstallDir` or `B2B_INSTALL_ROOT` setting can select a different folder. No Git client, pip, Node.js, or system Python installation is needed.
 
 Setup resolves `main` to an exact commit, downloads its complete source archive from GitHub, and stages a clean application copy. It also runs a changed setup script from that revision during the same update. The active code lives under `releases/`, selected by `current.json`; removed code cannot linger in that active copy. Local settings and data remain alongside the launcher.
 
@@ -45,7 +44,7 @@ To install an already-downloaded source revision without fetching `main`, use:
 
 That option still downloads any missing dependencies from GitHub. For an entirely offline installation, add `-Offline` and provide a populated `-DownloadCache`. An authenticated browser download of the source ZIP alone does not contain the dependency archives. Pandas/NumPy and Pydantic's native extensions are packaged for the pinned Python 3.13/Windows x64 ABI; the launcher refuses an incompatible or incomplete release.
 
-Run `start.ps1` in the install folder. The default address is <http://127.0.0.1:8765>. Sample buttons work without SQL or Qwen credentials. Fictional reconciliation examples let you inspect quality review without business data.
+Open <http://127.0.0.1:8766> on the work PC. Other computers on the reachable corporate network use `http://<work-pc-ipv4>:8766`. `start.ps1` now reports the installed service address; it remains available as the foreground launcher for local-source development installations. Sample buttons work without SQL or Qwen credentials. Fictional reconciliation examples let you inspect quality review without business data.
 
 For development, use the installed portable interpreter with this checkout's `run_app.py` after running `scripts/vendor_dependencies.py` with that same interpreter. That maintainer/development command may download from the pinned upstream URLs. Work-PC setup calls it in offline mode after fetching GitHub assets. The native dependencies require Windows x64 Python, including x64 emulation on Windows ARM. There is no frontend build step.
 
@@ -186,11 +185,11 @@ The page is a chat: conversations on the left, messages with their tables and ch
 
 Everything lives in the local SQLite file `data\history.sqlite3` in the install folder (schema version 3; an older file is copied to `history.sqlite3.v<n>-backup-<timestamp>` before migration, and restoring that copy is the rollback path): each person's conversations with every question, the model's raw reply, the effective plan, the answer summary, and the saved answer itself (compressed under a 6 MB per-answer bound, with the primary preview, complete supporting records, plan, dataset fingerprint, data-update time, and other available views); the `logins` table with name, IP address, browser, and time for every sign-in; and the `activity` table with owner, IP address, and time for every question, preview, re-shown result, deletion, and acceptance run. `GET /api/access-log` returns the recent entries. Credentials are never stored. Re-showing an earlier answer reads the saved result; only **Run with current data** recomputes, as a new turn.
 
-The app listens on loopback by default. Set `B2B_LISTEN_HOST=0.0.0.0` to let colleagues open `http://<this-pc>:8765`; requests must then be same-origin on the app port, and the name prompt identifies each person. The installer does not change firewall rules, install services, or expose a public listener. History is scoped by name, not by Salesforce authorization: the SQL source is shared for this team.
+The installed Windows service always launches with explicit `--host 0.0.0.0 --port 8766` arguments, so stale generic environment variables cannot move it back to port 8765. Setup creates the named `B2B Local Data TCP 8766` inbound firewall rule and validates both the localhost health endpoint and the all-interface listener before reporting success. Requests must be same-origin on the app port, and the name prompt identifies each person. History is scoped by name, not by Salesforce authorization: the SQL source is shared for this team.
 
 ## Updates and rollback
 
-Run `update_app.ps1` from the install folder to update: it stops the running app, runs `setup.ps1`, and starts the new release in a new window (`-NoRestart` skips the restart). Rerunning `setup.ps1` alone also works. `tools/apply_update.ps1` accepts an exact 40-character commit for controlled deployment. Setup stages a separate release, reuses or downloads its pinned dependencies, runs regression/API checks, verifies the release/configuration, then atomically selects it. Existing `.env` settings, custom business rules, and the data/history folder survive updates. Missing Test defaults and hash-recognized shipped business rules migrate before the local configuration check; a failed check restores their original bytes before leaving the previous release selected. Stop the running app with Ctrl+C and run `start.ps1` again to use the new release.
+Run `update_app.ps1` from the install folder to update. This is the only command needed: it requests Administrator access, stages and validates the new release, installs or refreshes the `B2BLocalData` service, updates its firewall rule, starts it, and checks `http://127.0.0.1:8766/api/status`. `-NoRestart` refreshes the service definition but leaves it stopped. `tools/apply_update.ps1` accepts an exact 40-character commit for controlled deployment. Existing `.env` settings, custom business rules, and the data/history folder survive updates. Missing Test defaults and hash-recognized shipped business rules migrate before the local configuration check; a failed check restores their original bytes before leaving the previous release selected.
 
 For an existing v0.2 installation, first replace its `setup.ps1` with the current repository copy once. That older bootstrap predates the GitHub asset lock and same-run installer refresh. Subsequent refreshes use the updated script automatically.
 
