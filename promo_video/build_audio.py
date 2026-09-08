@@ -1,16 +1,19 @@
 """Generate English narration from the fictional script and an original synth bed."""
-import asyncio, re, subprocess, wave
+import asyncio, re, subprocess, wave, hashlib, sys
 import numpy as np
 import edge_tts
-from render_video import ROOT, NARRATION, ffmpeg
+from render_video import ROOT, NARRATION, CUES, ffmpeg
 
 async def main():
     cache=ROOT/'audio'; cache.mkdir(exist_ok=True)
+    voices=[]
     for i,line in enumerate(NARRATION):
-        target=cache/f'voice_{i}.mp3'
+        target=cache/f'voice_{i}_{hashlib.sha256(line.encode()).hexdigest()[:10]}.mp3'
+        voices.append(target)
         if not target.exists():
-            print(f'Narration {i+1}/6',flush=True)
+            print(f'Narration {i+1}/{len(NARRATION)}',flush=True)
             await edge_tts.Communicate(line,'en-US-AriaNeural',rate='+0%').save(str(target))
+    if '--voices-only' in sys.argv: return
     sr=48000; times=np.arange(sr*60)/sr; bed=np.zeros(len(times))
     for i,notes in enumerate([(130.81,164.81,196),(110,130.81,164.81),(87.31,110,130.81),(98,123.47,146.83),(130.81,164.81,196),(98,130.81,196)]):
         mask=(times>=i*10)&(times<(i+1)*10); local=times[mask]-i*10
@@ -24,21 +27,24 @@ async def main():
     cmd=[ffmpeg(),'-y','-i',str(ROOT/'silent.mp4'),'-i',str(cache/'music.wav')]
     filters=['[1:a]volume=0.55[bed]']; labels=['[bed]']; srt=[]
     for i,line in enumerate(NARRATION):
-        path=cache/f'voice_{i}.mp3'; cmd+=['-i',str(path)]
+        path=voices[i]; cmd+=['-i',str(path)]
         info=subprocess.run([ffmpeg(),'-i',str(path)],capture_output=True,text=True).stderr
         m=re.search(r'Duration: (\d+):(\d+):([\d.]+)',info)
         duration=int(m[1])*3600+int(m[2])*60+float(m[3])
-        speed=max(1,duration/8.8)
+        slot=(CUES[i+1] if i+1<len(CUES) else 60)-CUES[i]-.7
+        speed=max(1,duration/slot)
         if speed>1.3: raise RuntimeError('Narration too long for comfortable delivery')
-        delay=i*10000+500
+        delay=CUES[i]*1000+250
         filters.append(f'[{i+2}:a]atempo={speed:.5f},adelay={delay},apad,atrim=duration=60[vo{i}]')
         labels.append(f'[vo{i}]')
         print(f'Voice {i+1}: {duration:.2f}s, playback speed {speed:.2f}',flush=True)
-        srt.append(f'{i+1}\n00:00:{i*10:02d},500 --> 00:00:{i*10+9:02d},500\n{line}\n')
-    filters.append(''.join(labels)+'amix=inputs=7:dropout_transition=0,volume=7,alimiter=limit=0.89,apad,atrim=duration=60[out]')
+        end=min(59.9,CUES[i]+.25+duration/speed)
+        srt.append(f'{i+1}\n00:00:{CUES[i]:02d},250 --> 00:00:{int(end):02d},{int((end%1)*1000):03d}\n{line}\n')
+    count=len(labels)
+    filters.append(''.join(labels)+f'amix=inputs={count}:dropout_transition=0,volume={count},alimiter=limit=0.89,apad,atrim=duration=60[out]')
     cmd+=['-filter_complex',';'.join(filters),'-map','0:v','-map','[out]','-c:v','copy','-c:a','aac','-b:a','192k','-t','60','-movflags','+faststart',str(ROOT/'b2b_showcase_60s.mp4')]
     with (ROOT/'audio_mix.log').open('w') as log: subprocess.run(cmd,stderr=log,check=True)
     (ROOT/'b2b_showcase_en.srt').write_text('\n'.join(srt),encoding='utf-8')
-    (ROOT/'voiceover.txt').write_text('\n\n'.join(f'{i*10:02d}s: {s}' for i,s in enumerate(NARRATION)),encoding='utf-8')
+    (ROOT/'voiceover.txt').write_text('\n\n'.join(f'{CUES[i]:02d}s: {s}' for i,s in enumerate(NARRATION)),encoding='utf-8')
 
 if __name__=='__main__': asyncio.run(main())

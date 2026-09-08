@@ -1,45 +1,54 @@
-# B2B — one-minute showcase
+# B2B — answers in seconds
 
-[Watch or download the video](b2b_showcase_60s.mp4)
+[Watch the one-minute video](b2b_showcase_60s.mp4)
 
-English narration, burned-in captions, an original synthesized soundtrack,
-and animated illustrative interfaces. H.264/AAC, 1920 × 1080, 30 fps, 60 seconds.
+A minimal, interface-led product demo: 48 of 60 seconds show recordings of the
+actual shipped B2B frontend, including typing, pending states, results, switching
+Chart/Data, and downloading CSV. English narration, quiet original synth music,
+and separate English subtitles. H.264/AAC, 1920 × 1080, 30 fps.
 
-The editorial reference is the local Scribble `promo_video/scribble_showcase_60s.mp4`:
-dark grid, blue/violet accents, interface-led scenes, captions and narration.
-No Scribble footage, narration or business data is reused.
+## Demo scope
 
-All names, amounts and records in this video are invented. A persistent badge
-labels the demo. The interfaces are purpose-built illustrations of the B2B
-workflow, not a screen recording or evidence of a live connection. The renderer
-does not read application datasets, configuration, credentials or saved history.
+All business data is invented. The capture serves only `web/dist` and intercepts
+every API request with a fictional response. No application backend, Salesforce
+extract, database, credentials or user history is accessed. The frontend itself
+is unmodified. This is a real UI recording with simulated responses, not a live
+model or database performance benchmark. The footer labels the scripted timing.
 
-The example contains six opportunities: Proposal EUR 60,000, Qualification
-EUR 40,000 and Negotiation EUR 20,000, two opportunities per stage. The supporting
-records scene shows three example rows from that set. Quality review is a separate
-capability illustration, not a claim that this example has passed validation.
-Capabilities and colors are grounded in the repository README and frontend.
+The mock response delay is 1.45 seconds; browser interaction and rendering bring
+the observed click-to-visible-result time to approximately two seconds. Actual
+capture measurements are in `captures/manifest.json`. The video keeps that
+interaction at normal speed. It does not assert a measured production SLA.
 
-## Timeline
+Six fictional opportunities sum to EUR 120,000: Negotiation 60,000, Qualified
+40,000, Identified 20,000. Two opportunities are in each stage. The negotiation
+query and exported CSV contain the same two records, EUR 35,000 and EUR 25,000.
 
-- 00–10: A conversational route from data to answers; fictional-data disclosure.
-- 10–20: Ask, validate and calculate.
-- 20–30: Animated chart, then the same values in a table.
-- 30–40: Supporting opportunities, product details and CSV.
-- 40–50: Quality review, freshness and saved-answer provenance.
-- 50–60: Closing product message.
+## Edit
+
+- 00–04: “Your pipeline. Answers in seconds.”
+- 04–20: Type the question; the EUR 120,000 result appears with supporting records.
+- 20–36: Ask for the stage breakdown; switch between the chart and table.
+- 36–52: Ask for negotiation deals; inspect the two records and download CSV.
+- 52–60: “Ask. Get answers. Move forward.”
+
+The earlier Scribble-inspired graphic treatment has been replaced by a warm
+white background, concise headlines and actual UI footage.
 
 ## Rebuild
 
-On Windows, install `requirements.txt` and set `FFMPEG_EXE` to an FFmpeg executable
-with libx264 and AAC support. The renderer uses the Windows Segoe UI font.
+Requires Windows Segoe UI, Python packages in `requirements.txt`, Node.js,
+Playwright (`npm install --no-save playwright` here), Chrome, and FFmpeg with
+libx264/AAC. Set `FFMPEG_EXE` and optionally `CHROME_EXE`. To reuse an installed
+Playwright package, set `PLAYWRIGHT_PACKAGE` to its enclosing package.json.
 
 ```powershell
+node capture_ui.cjs
 python render_video.py --preview
 python render_video.py
 python build_audio.py
 ```
 
-Only the invented narration is sent to the Edge TTS service. Visuals and music
-are generated locally. The audio cache and silent intermediate are ignored.
-The final MP4, poster, contact sheet, captions and editable source are included.
+Only the fictional narration is sent to Edge TTS. The audio and edit caches are
+ignored. The source UI clips, fixture capture script, response-time manifest,
+fictional CSV, final MP4, captions, poster and contact sheets are included.

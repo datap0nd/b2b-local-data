@@ -1,0 +1,23 @@
+[
+  {
+    "clip": 0,
+    "prompt": "What is the total value of open opportunities?",
+    "scriptedResponseDelayMs": 1450,
+    "observedUiResponseMs": 1874,
+    "apiCalls": 1
+  },
+  {
+    "clip": 1,
+    "prompt": "Show open pipeline value by stage",
+    "scriptedResponseDelayMs": 1450,
+    "observedUiResponseMs": 1888,
+    "apiCalls": 1
+  },
+  {
+    "clip": 2,
+    "prompt": "Show opportunities in negotiation",
+    "scriptedResponseDelayMs": 1450,
+    "observedUiResponseMs": 1889,
+    "apiCalls": 1
+  }
+]

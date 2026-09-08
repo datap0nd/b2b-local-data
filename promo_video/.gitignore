@@ -2,3 +2,5 @@ audio/
 __pycache__/
 *.log
 silent.mp4
+edit/
+node_modules/
