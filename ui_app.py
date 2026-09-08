@@ -93,6 +93,12 @@ class BrowserObservation(BaseModel):
     notes: str | None=Field(default=None,max_length=2000)
 
 
+class ScenarioObservation(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    status: Literal['pass','fail','blocked']
+    notes: str=Field(max_length=12000)
+
+
 class Snapshots:
     """The server-managed current dataset; a verified update time is reused only for the same dataset fingerprint."""
     def __init__(self,repository,seconds=60):
@@ -200,7 +206,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     app.state.executor=QueryExecutor()
     app.state.service=QueryService(app.state.planner,app.state.executor)
     acceptance_ui=settings.flag('B2B_ENABLE_ACCEPTANCE_UI',True)
-    app.state.acceptance=AcceptanceRunner(settings,app.state.snapshots.repository,app.state.service,settings.data_dir) if acceptance_ui else None
+    app.state.acceptance=AcceptanceRunner(settings,app.state.snapshots.repository,app.state.service,settings.data_dir,live=True) if acceptance_ui else None
     lane=app.state.service.lane
     secret=cookie_secret(settings)
     public_paths={'/','/favicon.ico','/api/login','/api/me','/api/status','/api/bootstrap'}
@@ -222,7 +228,9 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         if request.method=='POST':
             try: size=int(request.headers.get('content-length','0'))
             except ValueError: size=-1
-            if size<0 or size>32000 or request.headers.get('content-type','').split(';')[0]!='application/json' or 'transfer-encoding' in request.headers:
+            png_upload = bool(acceptance_ui and re.fullmatch(r'/api/test/runs/[0-9a-f]{32}/scenarios/S[0-9]{3}/png', request.url.path))
+            expected_type, maximum = ('image/png', 32 * 1024 * 1024) if png_upload else ('application/json', 32000)
+            if size<0 or size>maximum or request.headers.get('content-type','').split(';')[0]!=expected_type or 'transfer-encoding' in request.headers:
                 return JSONResponse({'error':'A bounded JSON request is required.'},status_code=400)
         try: request.state.owner=request_owner(settings,request,secret)
         except AppError as error: return JSONResponse({'error':str(error)},status_code=401)
@@ -343,12 +351,18 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
             return {'available':False,'turn_id':turn_id,'kind':'data','can_rerun':True,'message':'This answer used earlier amount and summary calculations. Run with current data for a corrected answer. The original record is preserved.'}
         return public_answer_payload({'available':True,'turn_id':turn_id,'session_id':session_id,'suggestions':default_suggestions(saved['table'])}|saved)
 
+    def answer_store(request, run_id, session_id, turn_id):
+        if run_id is None: return app.state.store
+        if not app.state.acceptance: raise AppError('Test is disabled.')
+        return app.state.acceptance.test_session(request.state.owner,run_id,session_id,turn_id)
+
+    @app.get('/api/test/runs/{run_id}/sessions/{session_id}/turns/{turn_id}/supporting')
     @app.get('/api/sessions/{session_id}/turns/{turn_id}/supporting')
     def supporting_page(request:Request,session_id:str,turn_id:int,view:Literal['summary','detail']='summary',
                         page:int=Query(default=0,ge=0),page_size:int=Query(default=50,ge=1,le=200),sort:str|None=None,
-                        direction:Literal['asc','desc']='asc'):
+                        direction:Literal['asc','desc']='asc',run_id:str=None):
         """Page frozen evidence from the saved answer, without a current-data read."""
-        result=app.state.store.load_supporting(request.state.owner,session_id,turn_id,view)
+        result=answer_store(request,run_id,session_id,turn_id).load_supporting(request.state.owner,session_id,turn_id,view)
         if not result['available']:
             return result
         table=result['table']
@@ -358,11 +372,12 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         visible=dict(table,rows=page_rows,truncated=len(page_rows)<len(ordered))
         return {'available':True,'view':view,'page':page,'page_size':page_size,'total_rows':len(ordered),'table':visible}
 
+    @app.get('/api/test/runs/{run_id}/sessions/{session_id}/turns/{turn_id}/supporting.csv')
     @app.get('/api/sessions/{session_id}/turns/{turn_id}/supporting.csv')
     def supporting_download(request:Request,session_id:str,turn_id:int,view:Literal['summary','detail']='summary',
-                            sort:str|None=None,direction:Literal['asc','desc']='asc'):
+                            sort:str|None=None,direction:Literal['asc','desc']='asc',run_id:str=None):
         """Export every frozen matching business row in the selected exact order."""
-        result=app.state.store.load_supporting(request.state.owner,session_id,turn_id,view)
+        result=answer_store(request,run_id,session_id,turn_id).load_supporting(request.state.owner,session_id,turn_id,view)
         if not result['available']:
             raise AppError(result.get('message') or 'The complete supporting list is unavailable.')
         table=result['table']
@@ -370,10 +385,12 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
         return Response(body,media_type='text/csv; charset=utf-8',headers={
             'Content-Disposition':f'attachment; filename="b2b-supporting-{view}.csv"','Cache-Control':'private, no-store'})
 
+    @app.post('/api/test/runs/{run_id}/sessions/{session_id}/turns/{turn_id}/actions')
     @app.post('/api/sessions/{session_id}/turns/{turn_id}/actions')
-    def result_action(request:Request,session_id:str,turn_id:int,payload:ActionRequest):
+    def result_action(request:Request,session_id:str,turn_id:int,payload:ActionRequest,run_id:str=None):
         """Deterministic view changes on a saved answer: Summary/Detailed or table/chart/cards presentation. No SQL, no model."""
-        saved=app.state.store.load_result(request.state.owner,session_id,turn_id)
+        store=answer_store(request,run_id,session_id,turn_id)
+        saved=store.load_result(request.state.owner,session_id,turn_id)
         if saved is None: raise AppError('This answer has no saved result to switch. Run with current data first.')
         if (saved.get('table',{}).get('metadata') or {}).get('calculation_version')!=CALCULATION_VERSION:
             raise AppError('This answer used earlier calculations. Run with current data before exploring its results.')
@@ -384,7 +401,7 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
             else:
                 chosen=(saved.get('variants') or {}).get(payload.view)
                 if not chosen or 'rows' not in chosen: raise AppError((chosen or {}).get('error') or 'That view was not saved with this answer.')
-            app.state.store.log_activity(request.state.owner,request.state.ip,'view',session_id,f'turn {turn_id} {payload.view}')
+            store.log_activity(request.state.owner,request.state.ip,'view',session_id,f'turn {turn_id} {payload.view}')
             return {'turn_id':turn_id,'table':chosen,'answer':compose_answer(chosen),'variants_available':sorted(k for k,v in (saved.get('variants') or {}).items() if 'rows' in v)}
         if payload.presentation is None: raise AppError('Choose table, chart, or cards.')
         if table.get('result_kind')!='aggregate': raise AppError('Chart and Data switching applies to grouped answers.')
@@ -445,7 +462,32 @@ def create_app(settings,repository=None,planner=None,store=None,enforce_release=
     if acceptance_ui:
         # Acceptance-test APIs (development only): the server owns the suite, the order, and the expected results.
         @app.get('/api/test/suite')
-        def test_suite(request:Request): return manifest()|{'qualification':app.state.acceptance.qualification(request.state.owner)}
+        def test_suite(request:Request):
+            from live_scenarios import manifest as live_manifest
+            return (live_manifest() if app.state.acceptance.live else manifest())|{'qualification':app.state.acceptance.qualification(request.state.owner)}
+
+        @app.get('/api/test/runs/{run_id}/payloads/{step_id}')
+        def test_payload(request:Request,run_id:str,step_id:str):
+            return app.state.acceptance.payload(request.state.owner,run_id,step_id)
+
+        @app.get('/api/test/runs/{run_id}/review')
+        def test_review(request:Request,run_id:str,start:int=Query(0,ge=0,le=199),size:int=Query(10,ge=1,le=200)):
+            return app.state.acceptance.review(request.state.owner,run_id,start,size)
+
+        @app.post('/api/test/runs/{run_id}/scenarios/{scenario_id}/observation')
+        def test_observation(request:Request,run_id:str,scenario_id:str,payload:ScenarioObservation):
+            return app.state.acceptance.record_scenario(request.state.owner,run_id,scenario_id,payload.model_dump())
+
+        @app.post('/api/test/runs/{run_id}/scenarios/{scenario_id}/png')
+        async def test_png(request:Request,run_id:str,scenario_id:str):
+            from evidence import MAX_PNG_BYTES
+            app.state.acceptance._load(request.state.owner,run_id)
+            if request.headers.get('content-type')!='image/png': raise AppError('Expected image/png.')
+            body=bytearray()
+            async for chunk in request.stream():
+                if len(body)+len(chunk)>MAX_PNG_BYTES: raise AppError('PNG exceeds 32 MiB.')
+                body.extend(chunk)
+            return app.state.acceptance.save_evidence(request.state.owner,run_id,scenario_id,bytes(body))
 
         @app.get('/api/test/runs')
         def test_runs(request:Request):

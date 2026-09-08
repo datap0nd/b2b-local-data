@@ -189,6 +189,10 @@ class AcceptanceApiTests(unittest.TestCase):
         repository.load_raw.side_effect=lambda:(frame.copy(),'postgres','test.b2b_project')
         repository.load.side_effect=lambda:__import__('data_layer').build_canonical_views(frame.copy())
         cls.local=LocalServer(Settings(cls.home,{'DB_KIND':'postgres','B2B_SOURCE_CONTRACT_VERIFIED':'true','PGURL':'db.example:5432/postgres','LLM_MODEL_NAME':'qwen-test','B2B_ENABLE_ACCEPTANCE_UI':'true'}),repository=repository,planner=ScriptedPlanner(witnesses))
+        # This class guards the historical qualification contract. The expanded
+        # live API and its required artifacts are exercised in test_live_scenarios.
+        from acceptance_runner import AcceptanceRunner
+        cls.local.app.state.acceptance=AcceptanceRunner(cls.local.app.state.acceptance.settings,repository,cls.local.app.state.service,cls.home/'data')
     @classmethod
     def tearDownClass(cls):cls.local.stop();cls.temp.cleanup()
     def request(self,path,body=None,**headers):return self.local.request(path,body,**headers)

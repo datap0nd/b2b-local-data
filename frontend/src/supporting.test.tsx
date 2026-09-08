@@ -31,12 +31,12 @@ it('loads full-snapshot pages and delegates sorting instead of sorting the previ
   await waitFor(() => expect(panel.getByTestId('result-table').querySelectorAll('tbody tr')).toHaveLength(50));
   fireEvent.click(panel.getByLabelText('Last page'));
   await waitFor(() => expect(panel.getByText('Invented opportunity 1005')).toBeTruthy());
-  expect(request).toHaveBeenLastCalledWith('synthetic', 1, 'summary', 20, 50, undefined);
+  expect(request).toHaveBeenLastCalledWith('synthetic', 1, 'summary', 20, 50, undefined, undefined);
   fireEvent.click(panel.getByRole('button', {name: 'Amount (USD)'}));
-  await waitFor(() => expect(request).toHaveBeenLastCalledWith('synthetic', 1, 'summary', 0, 50, {field: 'opportunity_amount', direction: 'asc'}));
+  await waitFor(() => expect(request).toHaveBeenLastCalledWith('synthetic', 1, 'summary', 0, 50, {field: 'opportunity_amount', direction: 'asc'}, undefined));
   await waitFor(() => expect(panel.getByRole('button', {name: 'Amount (USD)'}).hasAttribute('disabled')).toBe(false));
   fireEvent.click(panel.getByRole('button', {name: 'Amount (USD)'}));
-  await waitFor(() => expect(request).toHaveBeenLastCalledWith('synthetic', 1, 'summary', 0, 50, {field: 'opportunity_amount', direction: 'desc'}));
+  await waitFor(() => expect(request).toHaveBeenLastCalledWith('synthetic', 1, 'summary', 0, 50, {field: 'opportunity_amount', direction: 'desc'}, undefined));
   expect(panel.getByTestId('supporting-filters').textContent).toContain('Amount more than 100,000');
 });
 

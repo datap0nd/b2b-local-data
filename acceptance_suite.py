@@ -657,7 +657,8 @@ def reference_spec(step, variant, witnesses):
         elif op == 'year':
             filters.append({'field': field, 'op': 'between', 'value': [date(value, 1, 1), date(value, 12, 31)]})
         elif op in ('ge', 'gt', 'le', 'lt'):
-            filters.append({'field': field, 'op': op, 'value': Decimal(str(value))})
+            parsed = date.fromisoformat(value) if field in ('close_date', 'close_month', 'created_date', 'last_modified_date') else Decimal(str(value))
+            filters.append({'field': field, 'op': op, 'value': parsed})
         else:
             filters.append({'field': field, 'op': op, 'value': value})
     if expect['intent'] == 'table':

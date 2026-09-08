@@ -1,162 +1,284 @@
-import {useEffect, useRef, useState} from 'react';
-import * as DialogPrimitive from '@radix-ui/react-dialog';
-import {X} from 'lucide-react';
+import {lazy, Suspense, useEffect, useRef, useState} from 'react';
 import {api} from '@/api';
+import {changeAnswerView, changeAnswerPresentation} from '@/answerActions';
+import {TestScope} from '@/TestScope';
 import {Button} from '@/components/ui/button';
-import {ResultCard} from '@/components/ResultCard';
+import {Composer} from '@/components/Composer';
+import {Conversation} from '@/components/Conversation';
+import {ExpandedAnalysis} from '@/components/ExpandedAnalysis';
+import {Sidebar} from '@/components/Sidebar';
+import {useFreshness} from '@/useFreshness';
 import {CHECKS, type Harness, type Observation} from './checks';
-import {SYNTHETIC} from './synthetic';
-import {measureText, MEASURE_LABELS} from './independent';
-import type {AnswerText, AnswerPayload, PresentationName, TablePayload, ViewName} from '@/types';
+import {captureElement, scenarioPng} from './evidence';
+import type {AskResponse, ConversationTurn, PresentationName, TablePayload, ViewName} from '@/types';
 
-interface RunStatus { run: {id: string; status: string; snapshot: {source_name: string; opportunities: number; canonical_parity: boolean}; unqualified_reasons?: string[]; steps: StepRecord[]}; counts: Record<string, number>; next_step: number | null; total_steps: number; full_pass: boolean }
-interface StepRecord { id: string; title: string; status: string; prompt: string | null; browser_checks: number[]; interpretation: {ok: boolean; problems: string[]} | null; data_ok: boolean | null; clarification: string | null; returned_plan: unknown; effective_plan: unknown; error: string | null; recovered?: boolean }
-interface Rendered { table: TablePayload; answer: AnswerPayload; question: string }
+interface Step {id: string; scenario_id: string; turn_number: number; prompt: string | null; title: string; status: string; error: string | null; browser_checks: number[]; ui_actions: string[]; data_ok?: boolean; data?: {ok: boolean; differences?: unknown[]}; result?: {total_rows: number; rows: unknown[]; expected?: {total_rows: number; rows: unknown[]}}; interpretation?: {ok: boolean; problems: string[]}; expected: string}
+interface Scenario {id: string; number: number; title: string; step_ids: string[]; actions: string[]; png: unknown; ui: Observation | null}
+interface Status {run: {id: string; status: string; steps: Step[]; scenarios: Scenario[]}; next_step: number | null; total_steps: number; counts: Record<string, number>; full_pass: boolean}
+interface Suite {scenario_count: number; suite_version: string; steps: Step[]}
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+const frame = () => new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+const SyntheticPanel = lazy(() => import('./SyntheticPanel'));
 
-/** Acceptance panel: drives the server-owned suite, renders each result with the production
- *  ResultCard (expanded, so the full table is present), runs the browser checks with independent expectations, and
- *  records observations. Synthetic checks are labelled and never sent to the server. */
-export default function AcceptancePanel({onClose}: {onClose: () => void}) {
-  const [suite, setSuite] = useState<{suite_version: string; steps: unknown[]; browser_checks: unknown[]} | null>(null);
-  const [status, setStatus] = useState<RunStatus | null>(null);
-  const [caseText, setCaseText] = useState('Not started');
-  const [log, setLog] = useState<string[]>([]);
-  const [running, setRunning] = useState(false);
-  const [rendered, setRendered] = useState<Rendered | null>(null);
-  const [renderKey, setRenderKey] = useState(0);
-  const [view, setView] = useState<ViewName>('summary');
-  const [presentation, setPresentation] = useState<PresentationName>('table');
-  const host = useRef<HTMLDivElement>(null);
-  const errors = useRef(0);
-  const cancelled = useRef(false);
-  const original = useRef<TablePayload | null>(null);
-  const lastRendered = useRef<Rendered | null>(null);
-
-  useEffect(() => { const onError = () => { errors.current++; }; window.addEventListener('error', onError); return () => window.removeEventListener('error', onError); }, []);
-  useEffect(() => { api.raw<{suite_version: string; steps: unknown[]; browser_checks: unknown[]}>('/api/test/suite').then(setSuite).catch(e => setCaseText(e instanceof Error ? e.message : 'suite unavailable')); }, []);
-
-  const frame = () => new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-
-  async function renderStep(question: string, table: TablePayload, answer: AnswerPayload) {
-    original.current = JSON.parse(JSON.stringify(table));
-    setView(table.view); setPresentation(table.presentation);
-    lastRendered.current = {table, answer, question};
-    setRendered({table, answer, question}); setRenderKey(k => k + 1);
-    await frame(); await new Promise(r => setTimeout(r, 120));
-  }
-
-  async function prepareCheck(id: number, table: TablePayload | null) {
-    if (!table) return;
-    const scalar = table.result_kind === 'aggregate' && table.columns.every(column => MEASURE_LABELS[column]);
-    setPresentation(scalar ? 'cards' : id >= 6 && id <= 12 ? 'chart' : 'table');
-    await frame(); await new Promise(resolve => setTimeout(resolve, 250));
-  }
-
-  const append = (line: string) => setLog(prev => [line, ...prev].slice(0, 200));
-
-  async function runChecks(step: StepRecord, table: TablePayload | null, runId: string) {
-    for (const [n, id] of (step.browser_checks ?? []).entries()) {
-      if (cancelled.current) break;
-      let observation: Observation;
-      if (n > 0 && table && lastRendered.current) await renderStep(lastRendered.current.question, table, lastRendered.current.answer);
-      await prepareCheck(id, table);
-      try {
-        if (!table || step.status !== 'pass' && step.status !== 'review' && step.status !== 'fail') observation = {status: 'blocked', notes: `Step ${step.id} produced no rendered result (${step.status}).`};
-        else if (id >= 6 && id <= 12 && !table.chart) observation = {status: 'blocked', notes: `Step ${step.id} produced no chart (${step.status}).`};
-        else observation = await CHECKS[id](harnessFor(table));
-      } catch (error) { observation = {status: 'fail', notes: 'Check threw: ' + (error instanceof Error ? error.message : String(error))}; }
-      append(`Live check ${id}: ${observation.status}${observation.notes ? ' — ' + observation.notes : ''}`);
-      try { setStatus(await api.raw<RunStatus>(`/api/test/runs/${runId}/browser`, {check: id, status: observation.status, expected: observation.expected ?? null, observed: observation.observed ?? null, notes: observation.notes ?? null})); }
-      catch (error) { append(`Could not record check ${id}: ${error instanceof Error ? error.message : error}`); }
-    }
-  }
-  function harnessFor(table: TablePayload, synthetic = false): Harness { return {root: host.current!, table, original: original.current!, errors: () => errors.current, frame, setWidth: px => { if (host.current) host.current.style.width = px ? px + 'px' : ''; }, synthetic}; }
-
-  async function start() {
-    if (running) return; setRunning(true); cancelled.current = false; setLog([]); errors.current = 0;
-    try {
-      let current = await api.raw<RunStatus>('/api/test/runs', {}); setStatus(current);
-      while (!cancelled.current && current.run.status === 'running' && current.next_step !== null) {
-        const index = current.next_step;
-        const result = await api.raw<{step: StepRecord; status: RunStatus; table: TablePayload | null; answer?: AnswerText}>(`/api/test/runs/${current.run.id}/step`, {step: index});
-        current = result.status; setStatus(current);
-        const step = result.step;
-        setCaseText(`${index + 1} of ${current.total_steps} · ${step.id} ${step.title} · ${step.status}${step.recovered ? ' (recovered)' : ''}${step.interpretation && !step.interpretation.ok ? ' — ' + step.interpretation.problems.join('; ') : ''}`);
-        if (result.table && !step.clarification) {
-          const answer: AnswerPayload = {kind: 'table', turn_id: 0, session_id: '', table: result.table, variants: {}, answer: {title: step.title, sentence: step.prompt ?? '', metrics: []}, suggestions: []};
-          if (result.answer) answer.answer = result.answer;
-          await renderStep(step.prompt ?? step.title, result.table, answer);
-          await runChecks(step, result.table, current.run.id);
-        } else { setRendered(null); await runChecks(step, null, current.run.id); }
-      }
-      if (!cancelled.current) { current = await api.raw<RunStatus>(`/api/test/runs/${current.run.id}`); setStatus(current); setCaseText(current.run.status === 'complete' ? `Finished: ${current.full_pass ? 'qualified full pass' : 'not qualified'}${current.run.unqualified_reasons?.length ? ' — ' + current.run.unqualified_reasons.join('; ') : ''}` : `Run ${current.run.status}`); }
-    } catch (error) { setCaseText('Stopped: ' + (error instanceof Error ? error.message : String(error))); }
-    finally { setRunning(false); }
-  }
-
-  async function cancel() { cancelled.current = true; if (status) { try { setStatus(await api.raw<RunStatus>(`/api/test/runs/${status.run.id}/cancel`, {})); } catch { /* ignore */ } } }
-
-  async function synthetic() {
-    if (running) return; setRunning(true); cancelled.current = false; setLog([]); setCaseText('Synthetic checks (development evidence only)');
-    try {
-      for (const fixture of SYNTHETIC) {
-        if (cancelled.current) break;
-        const table = fixture.table();
-        await renderStep('synthetic: ' + fixture.title, table, {kind: 'table', turn_id: 0, session_id: '', table, variants: {}, answer: syntheticAnswer(fixture.title, table), suggestions: []});
-        for (const [n, id] of fixture.checks.entries()) {
-          if (cancelled.current) break;
-          let observation: Observation;
-          if (n > 0) await renderStep('synthetic: ' + fixture.title, table, {kind: 'table', turn_id: 0, session_id: '', table, variants: {}, answer: syntheticAnswer(fixture.title, table), suggestions: []});
-          await prepareCheck(id, table);
-          try { observation = await CHECKS[id](harnessFor(table, true)); } catch (error) { observation = {status: 'fail', notes: 'Check threw: ' + (error instanceof Error ? error.message : String(error))}; }
-          append(`Synthetic check ${id}: ${observation.status} — [${fixture.id} ${fixture.title}] ${observation.notes ?? ''}${observation.status === 'fail' ? ' observed=' + JSON.stringify(observation.observed).slice(0, 600) : ''}`);
-        }
-      }
-      setCaseText(cancelled.current ? 'Synthetic checks cancelled.' : 'Synthetic checks finished; they are not recorded on the server and are not live-source coverage.');
-    } finally { setRunning(false); }
-  }
-
-  const counts = status?.counts;
-  return (
-    <DialogPrimitive.Root open onOpenChange={open => { if (!open && !running) onClose(); }}><DialogPrimitive.Portal><DialogPrimitive.Content className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-surface" aria-describedby={undefined} data-testid="test-panel" onEscapeKeyDown={event => { if (running) event.preventDefault(); }}>
-      <DialogPrimitive.Title className="sr-only">Acceptance test</DialogPrimitive.Title>
-      <div className="flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2">
-        <span className="font-semibold">Acceptance test</span>
-        <span className="text-xs text-ink-3" data-testid="test-suite">{suite ? `Suite ${suite.suite_version}: ${suite.steps.length} prompt turns, ${suite.browser_checks.length} browser checks` : 'Loading the suite'}</span>
-        <span className="ml-auto flex flex-wrap gap-2">
-          <Button size="sm" onClick={start} disabled={running || !suite} data-testid="test-start">Run tests</Button>
-          <Button size="sm" variant="outline" onClick={cancel} disabled={!running}>Cancel</Button>
-          <Button size="sm" variant="outline" onClick={synthetic} disabled={running} data-testid="test-synthetic">Run synthetic checks</Button>
-          {status && <a className="inline-flex h-8 items-center rounded-lg border border-line px-3 text-[13px]" href={`/api/test/runs/${status.run.id}/report`} download>Download report</a>}
-          <Button size="sm" variant="ghost" onClick={onClose} disabled={running} aria-label="Close"><X /></Button>
-        </span>
-      </div>
-      <div className="grid gap-2 border-b border-line bg-canvas px-4 py-2 text-sm md:grid-cols-3">
-        <p data-testid="test-case"><span className="text-xs uppercase text-ink-3">Case </span>{caseText}</p>
-        <p data-testid="test-progress">{counts ? `Passed ${counts.passed} · Failed ${counts.failed} · Review ${counts.review ?? 0} · Blocked ${counts.blocked} · Remaining ${counts.remaining} · Browser ${counts.browser_passed}/${counts.browser_passed + counts.browser_failed + counts.browser_blocked + counts.browser_remaining}` : '—'}</p>
-        <p className="text-ink-2">{status ? `Run ${status.run.id.slice(0, 8)} · ${status.run.status}${status.full_pass ? ' · qualified' : ''} · ${status.run.snapshot.source_name} · ${status.run.snapshot.opportunities.toLocaleString()} opportunities · parity ${status.run.snapshot.canonical_parity ? 'ok' : 'FAILED'}` : ''}</p>
-      </div>
-      <p className="border-b border-line bg-canvas px-4 py-1.5 text-xs text-ink-3">Run tests uses the configured data and model and shows each result here. Synthetic checks exercise conditions absent from live data with invented payloads; they are development evidence only and are never recorded as live coverage.</p>
-      <div className="max-h-44 overflow-auto border-b border-line bg-canvas px-4 py-2 text-xs scroll-thin" data-testid="test-browser-log" aria-live="polite">
-        {log.map((line, i) => <p key={i} className={line.includes(': pass') ? 'text-won' : line.includes(': fail') ? 'text-danger' : 'text-warn'}>{line}</p>)}
-      </div>
-      <div className="flex-1 overflow-auto p-4 scroll-thin">
-        <div ref={host} className="mx-auto w-full max-w-[1120px]" data-testid="test-result">
-          {rendered && (
-            <div key={renderKey}>
-              <ResultCard answer={rendered.answer} shown={presentationTable(rendered.table, presentation)} view={view} presentation={presentation} expanded
-                onView={setView} onPresentation={setPresentation} onExplore={() => {}} onSuggestion={() => {}} />
-            </div>
-          )}
-        </div>
-      </div>
-    </DialogPrimitive.Content></DialogPrimitive.Portal></DialogPrimitive.Root>
-  );
+function responseTurn(step: Step, reply: AskResponse | null): ConversationTurn {
+  if (!reply) return {id: step.id, question: step.prompt ?? step.title, assistant: {status: 'error', message: `${step.status}: ${step.error ?? 'No model response was produced.'}`, retry: () => {}}};
+  if (reply.kind === 'clarify') return {id: step.id, question: step.prompt ?? step.title, assistant: {status: 'clarify', text: reply.question, suggestions: reply.suggestions}};
+  return {id: step.id, question: step.prompt ?? step.title, assistant: {status: 'answer', answer: reply, shown: reply.table, view: reply.table.view, presentation: reply.table.presentation}};
 }
 
-function presentationTable(table: TablePayload, presentation: PresentationName): TablePayload { return table.presentation === presentation ? table : {...table, presentation}; }
+/** Same production components and answer actions, with an explicitly isolated API scope. */
+export default function AcceptancePanel({onClose}: {onClose: () => void}) {
+  const [suite, setSuite] = useState<Suite | null>(null);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  const turnsRef = useRef<ConversationTurn[]>([]);
+  const [expanded, setExpanded] = useState<string | number | null>(null);
+  const [draft, setDraft] = useState('');
+  const [running, setRunning] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pauseRef = useRef(false), stopRef = useRef(false), active = useRef(false);
+  const [hold, setHold] = useState(2);
+  const [message, setMessage] = useState('Ready. Runs use the configured data and local model.');
+  const [current, setCurrent] = useState('Not started');
+  const [syntheticOpen, setSyntheticOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [narrow, setNarrow] = useState(() => window.innerWidth < 900);
+  const [batch, setBatch] = useState(0);
+  const [copyText, setCopyText] = useState('');
+  const [captureRetry, setCaptureRetry] = useState(false);
+  const retryRef = useRef<(() => Promise<void>) | null>(null);
+  const surface = useRef<HTMLDivElement>(null), errors = useRef(0);
+  const freshness = useFreshness(true);
+  const runRef = useRef('');
+  const actionInFlight = useRef<Promise<void>>(Promise.resolve());
+  const setConversation = (next: ConversationTurn[]) => { turnsRef.current = next; setTurns(next); };
 
-function syntheticAnswer(title: string, table: TablePayload): AnswerText {
-  const scalar = table.result_kind === 'aggregate' && table.columns.every(column => MEASURE_LABELS[column]);
-  return {title, sentence: '', metrics: scalar ? table.columns.map(column => ({label: MEASURE_LABELS[column], raw: table.rows[0]?.[column] ?? null, value: measureText(table, column, table.rows[0]?.[column] ?? null)})) : []};
+  useEffect(() => {
+    api.raw<Suite>('/api/test/suite').then(setSuite).catch(e => setMessage(String(e)));
+    const retained = localStorage.getItem('b2b-test-run');
+    if (retained) api.raw<Status>(`/api/test/runs/${retained}`).then(value => {
+      setStatus(value); runRef.current = value.run.id;
+      setMessage(value.run.status === 'running' ? 'Saved test run found. Resume continues without repeating completed model calls.' : `Previous test run: ${value.run.status}. Reports remain available.`);
+    }).catch(() => localStorage.removeItem('b2b-test-run'));
+  }, []);
+  useEffect(() => { const resized = () => setNarrow(window.innerWidth < 900); window.addEventListener('resize', resized); return () => window.removeEventListener('resize', resized); }, []);
+  useEffect(() => {
+    const error = () => { errors.current++; };
+    const leave = (e: BeforeUnloadEvent) => { if (active.current) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('error', error); window.addEventListener('unhandledrejection', error); window.addEventListener('beforeunload', leave);
+    return () => { window.removeEventListener('error', error); window.removeEventListener('unhandledrejection', error); window.removeEventListener('beforeunload', leave); };
+  }, []);
+
+  async function checkpoint(delay = 0) {
+    let elapsed = 0;
+    while (elapsed < delay || pauseRef.current) {
+      if (stopRef.current) throw new Error('Stopped by user.');
+      await sleep(100); if (!pauseRef.current) elapsed += 100;
+    }
+    if (stopRef.current) throw new Error('Stopped by user.');
+  }
+  async function settled() { await document.fonts.ready; await frame(); await sleep(300); }
+  function updateTurn(id: string | number, update: (t: ConversationTurn) => ConversationTurn) { setConversation(turnsRef.current.map(t => t.id === id ? update(t) : t)); }
+  const onView = (t: ConversationTurn, v: ViewName) => {
+    if (t.assistant.status !== 'answer') return;
+    const a = t.assistant.answer;
+    actionInFlight.current = changeAnswerView(t, v, next => updateTurn(t.id, () => next), () => api.raw<{table: TablePayload}>(`/api/test/runs/${runRef.current}/sessions/${a.session_id}/turns/${a.turn_id}/actions`, {action: 'view', view: v}));
+  };
+  const onPresentation = (t: ConversationTurn, p: PresentationName) => updateTurn(t.id, old => changeAnswerPresentation(old, p));
+  function button(root: ParentNode, name: string) { return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(b => b.textContent?.trim() === name || b.getAttribute('aria-label') === name); }
+
+  async function check(step: Step, turn: ConversationTurn, id: number): Promise<Observation> {
+    if (turn.assistant.status !== 'answer') return {status: 'blocked', notes: 'No data answer to inspect.'};
+    const table = turn.assistant.shown;
+    setExpanded(turn.id); await settled();
+    const host = surface.current!;
+    const harness: Harness = {root: host, table, original: structuredClone(table), errors: () => errors.current, frame: async () => { await frame(); await actionInFlight.current; await frame(); },
+      setWidth: width => { host.style.width = width ? `${width}px` : ''; }};
+    let observation: Observation;
+    try { observation = await CHECKS[id](harness); }
+    catch (e) { observation = {status: 'fail', notes: String(e)}; }
+    finally { host.style.width = ''; }
+    if (step.browser_checks.includes(id)) await api.raw(`/api/test/runs/${runRef.current}/browser`, {check: id, ...observation});
+    return observation;
+  }
+
+  async function showActions(step: Step, turn: ConversationTurn, tiles: HTMLCanvasElement[], notes: string[]) {
+    if (turn.assistant.status !== 'answer') {
+      for (const id of step.browser_checks) await api.raw(`/api/test/runs/${runRef.current}/browser`, {check: id, status: 'blocked', notes: 'No data answer.'});
+      return;
+    }
+    const table = turn.assistant.shown;
+    const chartCheck = table.chart ? ({bar: 6, line: 7, area: 8, scatter: 9} as Record<string, number>)[table.chart.type] : undefined;
+    const ids = new Set(step.browser_checks);
+    if (chartCheck && table.presentation === 'chart') ids.add(chartCheck);
+    if (step.ui_actions?.includes('sort')) { ids.add(3); ids.add(4); }
+    if (step.ui_actions?.includes('paginate')) ids.add(table.view === 'summary' ? 1 : 2);
+    if (step.ui_actions?.includes('export')) ids.add(5);
+    for (const id of ids) {
+      await checkpoint();
+      const observation = await check(step, turn, id);
+      notes.push(`Check ${id}: ${observation.status} ${observation.notes ?? ''}`);
+      tiles.push(...await captureElement(surface.current!));
+      await checkpoint(hold * 1000);
+    }
+    setExpanded(null); await settled();
+    for (const name of step.ui_actions ?? []) {
+      await checkpoint();
+      const root = surface.current!;
+      if (name === 'chart-data' && table.chart) {
+        const data = button(root, 'Data'); if (!data) throw new Error('Data control is missing.');
+        data.click(); await settled();
+        if (!root.querySelector('[data-testid="primary-result"] [data-testid="result-table"]')) notes.push('fail: Data view did not render a table.');
+        tiles.push(...await captureElement(root)); await checkpoint(hold * 1000);
+        button(root, 'Chart')?.click(); await settled();
+      } else if (name === 'explore') {
+        const explore = button(root, 'Explore results');
+        if (explore) { explore.click(); await settled(); tiles.push(...await captureElement(root)); await checkpoint(hold * 1000); setExpanded(null); await settled(); }
+        else notes.push('blocked: no Explore results control for this answer.');
+      } else if (name === 'resize') {
+        root.style.width = '390px'; window.dispatchEvent(new Event('resize')); await settled();
+        const chart = root.querySelector('[data-testid="result-chart"]');
+        if (chart && chart.getBoundingClientRect().width > 392) notes.push('fail: chart overflows narrow viewport.');
+        tiles.push(...await captureElement(root)); await checkpoint(hold * 1000); root.style.width = ''; window.dispatchEvent(new Event('resize')); await settled();
+      } else if (name === 'reopen') {
+        const payload = await api.raw<AskResponse>(`/api/test/runs/${runRef.current}/payloads/${step.id}`);
+        if (payload.kind !== 'table' || payload.table.result_digest !== table.result_digest) notes.push('fail: reopened answer changed its result digest.');
+        updateTurn(turn.id, () => responseTurn(step, payload)); await settled();
+      } else if (name === 'supporting') {
+        const open = root.querySelector<HTMLButtonElement>('[data-testid="supporting-explore"]');
+        if (open) {
+          open.click(); await settled();
+          for (let n = 0; n < 100 && document.querySelector('[data-testid="supporting-panel"]')?.textContent?.includes('Loading'); n++) await sleep(100);
+          const full = document.querySelector<HTMLElement>('[data-testid="supporting-panel"]');
+          if (full) { tiles.push(...await captureElement(full)); await checkpoint(hold * 1000); }
+          else notes.push('fail: supporting records did not open.');
+          document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); await settled();
+        } else notes.push('blocked: supporting records control unavailable.');
+      } else if (name === 'quality') {
+        const quality = root.querySelector<HTMLButtonElement>('[data-testid="quality"]');
+        if (quality) { quality.click(); await settled(); const dialog = document.querySelector<HTMLElement>('[role="dialog"]'); if (dialog) tiles.push(...await captureElement(dialog)); document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); }
+        else notes.push('blocked: no quality review for this snapshot.');
+      }
+    }
+    notes.push(`Browser errors: ${errors.current}`);
+    if (errors.current) notes.push('fail: browser error observed.');
+  }
+
+  async function upload(run: string, scenario: string, blob: Blob) {
+    const result = await fetch(`/api/test/runs/${run}/scenarios/${scenario}/png`, {method: 'POST', headers: {'Content-Type': 'image/png'}, body: blob});
+    if (!result.ok) throw new Error((await result.json()).error ?? 'PNG save failed.');
+    setStatus(await result.json());
+  }
+
+  async function execute(existing?: Status) {
+    if (active.current) return;
+    active.current = true; setRunning(true); stopRef.current = false; pauseRef.current = false; setPaused(false); setCaptureRetry(false);
+    try {
+      let state = existing ?? await api.raw<Status>('/api/test/runs', {});
+      runRef.current = state.run.id; localStorage.setItem('b2b-test-run', state.run.id); setStatus(state);
+      for (const scenario of state.run.scenarios) {
+        if (scenario.png) continue;
+        await checkpoint(); setConversation([]); setExpanded(null); errors.current = 0;
+        setCurrent(`${scenario.number}/200 · ${scenario.id} · ${scenario.title}`);
+        const tiles: HTMLCanvasElement[] = [], notes: string[] = [];
+        for (const stepId of scenario.step_ids) {
+          const index = state.run.steps.findIndex(s => s.id === stepId);
+          let step = state.run.steps[index];
+          await checkpoint(); setDraft(step.prompt ?? ''); setMessage(`${scenario.id} · turn ${step.turn_number}: ${step.prompt ?? step.title}`); await settled();
+          setConversation([...turnsRef.current, {id: step.id, question: step.prompt ?? step.title, assistant: {status: 'pending'}}]); setDraft(''); await frame();
+          let payload: AskResponse | null;
+          if (state.next_step !== null && index >= state.next_step) {
+            const result = await api.raw<{step: Step; status: Status; payload: AskResponse | null}>(`/api/test/runs/${state.run.id}/step`, {step: index});
+            state = result.status; step = result.step; payload = result.payload;
+          } else payload = await api.raw<AskResponse | null>(`/api/test/runs/${state.run.id}/payloads/${step.id}`);
+          let readingPosition: number | null = null;
+          if (step.ui_actions?.includes('scrollback') && step.turn_number > 1) {
+            // Stay in the real loading state while exercising the reader's scroll position.
+            await sleep(1000);
+            const scroller = surface.current!.querySelector<HTMLElement>('[data-testid="conversation"]');
+            if (scroller && scroller.scrollHeight - scroller.clientHeight > 80) {
+              scroller.scrollTop = 0;
+              scroller.dispatchEvent(new Event('scroll', {bubbles: true}));
+              await settled(); readingPosition = scroller.scrollTop;
+            } else notes.push('blocked: scrollback requires an overflowing conversation.');
+          }
+          const completed = responseTurn(step, payload);
+          updateTurn(step.id, () => completed); setStatus(state); await settled();
+          if (readingPosition !== null) {
+            const scroller = surface.current!.querySelector<HTMLElement>('[data-testid="conversation"]')!;
+            const latest = surface.current!.querySelector<HTMLButtonElement>('[data-testid="new-answer"]');
+            if (Math.abs(scroller.scrollTop - readingPosition) > 2) notes.push('fail: new response displaced the reader while scrolled back.');
+            if (!latest) notes.push('fail: New answer control missing while scrolled back.');
+            tiles.push(...await captureElement(surface.current!)); await checkpoint(hold * 1000);
+            latest?.click(); await sleep(1000); await settled();
+          }
+          notes.push(`${step.id}: ${step.status}; interpretation=${step.interpretation?.ok ?? 'unavailable'}; data=${step.data_ok ?? step.data?.ok ?? 'see report'}; ${(step.interpretation?.problems ?? []).join('; ')} ${step.error ?? ''}`);
+          if (step.result?.expected) notes.push(`Matching rows: expected ${step.result.expected.total_rows}; observed ${step.result.total_rows}.`);
+          if (step.data?.differences?.length) notes.push('Differences: ' + JSON.stringify(step.data.differences.slice(0, 3)).slice(0, 1400));
+          if (payload?.kind === 'table' && payload.table.result_kind === 'aggregate' && step.result?.expected) notes.push('Expected values (first 3 groups): ' + JSON.stringify(step.result.expected.rows.slice(0, 3)).slice(0, 1200));
+          // Check natural headline visibility before scrolling for evidence.
+          const article = surface.current!.querySelector<HTMLElement>('[data-testid="turn"]:last-child');
+          if (article) {
+            const headline = article.querySelector('[data-testid="answer-title"]');
+            const viewport = surface.current!.getBoundingClientRect();
+            if (headline && (headline.getBoundingClientRect().top < viewport.top || headline.getBoundingClientRect().bottom > viewport.bottom)) notes.push('fail: answer headline not visible after completion.');
+            tiles.push(...await captureElement(article));
+            await checkpoint(hold * 1000);
+            // Additional readable views for the live recording, after natural scroll assertions.
+            for (let y = viewport.height; y < article.scrollHeight; y += viewport.height * .8) {
+              const scroller = surface.current!.querySelector<HTMLElement>('[data-testid="conversation"]');
+              if (scroller) { scroller.scrollTop += viewport.height * .8; await settled(); await checkpoint(hold * 1000); }
+            }
+          }
+          try { await showActions(step, completed, tiles, notes); }
+          catch (e) { if (stopRef.current) throw e; notes.push('fail: ' + String(e)); setExpanded(null); }
+        }
+        const observation = {status: notes.some(n => /\bfail\b/i.test(n)) ? 'fail' : notes.some(n => /\bblocked\b/i.test(n)) ? 'blocked' : 'pass', notes: notes.join('\n').slice(0, 12000)};
+        state = await api.raw<Status>(`/api/test/runs/${state.run.id}/scenarios/${scenario.id}/observation`, observation);
+        const blob = await scenarioPng(`${scenario.id} · ${scenario.title}`, notes, tiles);
+        const save = async () => { await upload(state.run.id, scenario.id, blob); };
+        retryRef.current = save;
+        try { await save(); retryRef.current = null; } catch (e) { setCaptureRetry(true); throw e; }
+        state = await api.raw<Status>(`/api/test/runs/${state.run.id}`); setStatus(state);
+      }
+      setMessage('Finished: 200 scenario PNGs saved. Copy the report for accuracy review; visual review remains pending.');
+    } catch (e) {
+      setMessage(String(e));
+      if (stopRef.current && runRef.current) setStatus(await api.raw<Status>(`/api/test/runs/${runRef.current}/cancel`, {}));
+    } finally { active.current = false; setRunning(false); setDraft(''); }
+  }
+
+  async function copy() {
+    if (!status) return;
+    const text = JSON.stringify(await api.raw(`/api/test/runs/${status.run.id}/review?start=${batch * 10}&size=10`), null, 2);
+    setCopyText(text);
+    try { await navigator.clipboard.writeText(text); setMessage(`Copied scenarios ${batch * 10 + 1}–${Math.min(200, batch * 10 + 10)} with overall summary.`); }
+    catch { setMessage('Select and copy the report text below.'); }
+  }
+  const expandedTurn = turns.find(t => t.id === expanded);
+  const noop = () => {};
+  if (syntheticOpen) return <Suspense fallback={null}><SyntheticPanel onClose={() => setSyntheticOpen(false)} /></Suspense>;
+  return <TestScope.Provider value={status?.run.id}><div className="fixed inset-0 z-50 flex bg-page" data-testid="test-panel">
+    <Sidebar sessions={[]} currentId={null} collapsed={collapsed} overlay={narrow} open={false} onToggle={() => setCollapsed(v => !v)} onClose={noop} onNew={noop} onSelect={noop} onRename={noop} onDelete={noop} freshness={freshness} devEntry={<span className="px-3 text-sm">Test · isolated conversations</span>} />
+    <main className="flex min-w-0 flex-1 flex-col">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line bg-canvas p-2 text-xs">
+        <span data-testid="test-suite">{suite ? `${suite.scenario_count} scenarios · ${suite.steps.length} prompts` : 'Loading suite…'}</span>
+        <Button size="sm" disabled={running || !suite || status?.run.status === 'running'} onClick={() => void execute()} data-testid="test-start">Run tests</Button>
+        <Button size="sm" variant="ghost" disabled={running} data-testid="test-synthetic" onClick={() => setSyntheticOpen(true)}>Synthetic checks</Button>
+        {!running && status?.run.status === 'running' && <Button size="sm" onClick={() => void execute(status)}>Resume run</Button>}
+        <Button size="sm" variant="outline" disabled={!running} onClick={() => { pauseRef.current = !pauseRef.current; setPaused(pauseRef.current); }}>{paused ? 'Resume' : 'Pause'}</Button>
+        <Button size="sm" variant="outline" disabled={!running} onClick={() => { stopRef.current = true; pauseRef.current = false; setMessage('Stopping after the current model request returns…'); }}>Stop</Button>
+        <label>Hold <input aria-label="Display hold seconds" className="w-12 rounded border p-1" type="number" min="0" max="30" value={hold} disabled={running} onChange={e => setHold(Math.max(0, Math.min(30, Number(e.target.value) || 0)))} /> s</label>
+        <Button size="sm" variant="ghost" disabled={running} onClick={onClose}>Exit test</Button>
+        {captureRetry && <Button size="sm" onClick={() => void retryRef.current?.().then(() => { setCaptureRetry(false); retryRef.current = null; setMessage('PNG saved. Resume run to continue.'); }).catch(e => setMessage(String(e)))}>Retry PNG save</Button>}
+      </div>
+      <div className="border-b border-line bg-canvas px-3 py-2 text-xs"><strong data-testid="test-case">{current}</strong><p role="status">{message}</p><p data-testid="test-progress">{status ? `Passed ${status.counts.passed} · Failed ${status.counts.failed} · Blocked ${status.counts.blocked} · PNGs ${status.run.scenarios.filter(s => s.png).length}/200` : 'Normal saved chats are untouched.'}</p></div>
+      <div ref={surface} className="flex min-h-0 flex-1 flex-col" data-testid="test-result">
+        {expandedTurn?.assistant.status === 'answer' ? <ExpandedAnalysis answer={expandedTurn.assistant.answer} shown={expandedTurn.assistant.shown} view={expandedTurn.assistant.view} presentation={expandedTurn.assistant.presentation} onView={v => onView(expandedTurn, v)} onPresentation={p => onPresentation(expandedTurn, p)} onExplore={noop} onSuggestion={noop} onClose={() => setExpanded(null)} /> :
+          <Conversation turns={turns} empty={!turns.length} onView={onView} onPresentation={onPresentation} onExplore={t => setExpanded(t.id)} onSuggestion={text => setMessage(`Suggestion: ${text}. Authored tests control the next prompt.`)} onRunWithCurrent={noop} />}
+      </div>
+      <div className="border-t border-line bg-canvas px-4 pb-4 pt-3 md:px-6"><Composer busy draft={draft} onDraftChange={noop} onSubmit={noop} placeholder="The test runner submits each authored prompt" /></div>
+      {status && !running && <div className="border-t p-2 text-xs"><label>Report batch <select value={batch} onChange={e => setBatch(Number(e.target.value))}>{Array.from({length: 20}, (_, i) => <option key={i} value={i}>{i * 10 + 1}–{i * 10 + 10}</option>)}</select></label><Button size="sm" onClick={() => void copy()}>Copy results for review</Button><a href={`/api/test/runs/${status.run.id}/report`} download>Download report</a>{copyText && <textarea className="block h-28 w-full" aria-label="Review report text" value={copyText} readOnly />}</div>}
+    </main>
+  </div></TestScope.Provider>;
 }

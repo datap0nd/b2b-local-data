@@ -1,6 +1,7 @@
 import {lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {FlaskConical, Menu} from 'lucide-react';
 import {api, ApiError} from './api';
+import {changeAnswerView, changeAnswerPresentation} from './answerActions';
 import {Button} from './components/ui/button';
 import {Composer} from './components/Composer';
 import {Conversation} from './components/Conversation';
@@ -123,21 +124,12 @@ export function App() {
 
   const onView = useCallback(async (turn: ConversationTurn, view: ViewName) => {
     if (turn.assistant.status !== 'answer' || !sessionId || typeof turn.id !== 'number') return;
-    const current = turn.assistant;
-    if (current.view === view) return;
-    const local = current.answer.variants?.[view];
-    if (local && 'rows' in local) { update(turn.id, t => ({...t, assistant: {...current, shown: local as TablePayload, view, presentation: 'table'}})); return; }
-    update(turn.id, t => ({...t, assistant: {...current, loading: true}}));
-    try {
-      const reply = await api.view(sessionId, turn.id, view);
-      update(turn.id, t => ({...t, assistant: {...current, shown: reply.table, view, loading: false, answer: {...current.answer, variants: {...current.answer.variants, [view]: reply.table}}}}));
-    } catch (error) { update(turn.id, t => ({...t, assistant: {...current, loading: false, notice: error instanceof Error ? error.message : 'That view is not available.'}})); }
+    const id = turn.id;
+    await changeAnswerView(turn, view, next => update(id, () => next), () => api.view(sessionId, id, view));
   }, [sessionId]);
 
   const onPresentation = useCallback((turn: ConversationTurn, presentation: PresentationName) => {
-    if (turn.assistant.status !== 'answer') return;
-    const current = turn.assistant;
-    update(turn.id, t => ({...t, assistant: {...current, presentation}}));
+    update(turn.id, t => changeAnswerPresentation(t, presentation));
   }, []);
 
   const onRunWithCurrent = useCallback(async (turn: ConversationTurn) => {

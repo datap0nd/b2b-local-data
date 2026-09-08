@@ -133,13 +133,20 @@ def md_table(columns, rows):
 
 
 class AcceptanceRunner:
-    def __init__(self, settings, repository, service, data_dir):
+    def __init__(self, settings, repository, service, data_dir, *, live=False):
         self.settings, self.repository, self.service = settings, repository, service
+        self.live = live
+        self.steps, self.suite_version, self.scenarios = STEPS, SUITE_VERSION, []
+        if live:
+            from live_scenarios import STEPS as live_steps, SCENARIOS, VERSION
+            self.steps, self.suite_version, self.scenarios = live_steps, VERSION, SCENARIOS
+        self.artifacts = settings.home / 'test-results'
         self.root = Path(data_dir) / 'acceptance'
         (self.root / 'runs').mkdir(parents=True, exist_ok=True)
         (self.root / 'snapshots').mkdir(parents=True, exist_ok=True)
         self.history = HistoryStore(self.root / 'test_history.sqlite3')
         self.snapshots = {}
+        self._cached_runs = {}
         self.lock = threading.Lock()
 
     # ----- persistence -----
@@ -154,8 +161,11 @@ class AcceptanceRunner:
     def _save(self, run):
         path = self._path(run['id'])
         temporary = path.with_suffix('.tmp')
-        temporary.write_text(json.dumps(jsonable(run), ensure_ascii=False, indent=1), encoding='utf-8')
+        temporary.write_text(json.dumps(jsonable(run), ensure_ascii=False, indent=None if self.live else 1), encoding='utf-8')
         temporary.replace(path)
+        if self.live:
+            self._cached_runs[run['id']] = run
+            while len(self._cached_runs) > 3: self._cached_runs.pop(next(iter(self._cached_runs)))
 
     def _save_snapshot(self, run_id, records, source, source_name, relation):
         """Lossless local copy of the raw records (trimmed of nothing) so the run can be replayed."""
@@ -177,7 +187,11 @@ class AcceptanceRunner:
         path = self._path(run_id)
         if not path.exists():
             raise AppError('Unknown test run.')
-        run = json.loads(path.read_text(encoding='utf-8'))
+        run = self._cached_runs.get(run_id) if self.live else None
+        if run is None:
+            run = json.loads(path.read_text(encoding='utf-8'))
+            journal = self.artifacts / run_id / 'scenarios.json'
+            if self.live and journal.exists(): run['scenarios'] = json.loads(journal.read_text(encoding='utf-8'))
         if run['owner'] != owner:
             raise AppError('Unknown test run.')
         if run['status'] == 'running' and run_id not in self.snapshots:
@@ -237,6 +251,9 @@ class AcceptanceRunner:
                                 'normalization_warnings': self._normalization_warnings(views, summary), 'load_seconds': round(monotonic() - started, 3), 'retained_snapshot': None},
                    'planner': {'settings': None, 'fallback_events': [], 'prompt_digest': prompt_digest, 'corrections': 0, 'recovered_steps': []},
                    'witnesses': witnesses, 'coverage': coverage, 'notes': list(notes), 'steps': [], 'browser': [], 'next_step': 0, 'qualified': None, 'unqualified_reasons': []}
+            run['identity']['suite_version'] = self.suite_version
+            if self.live:
+                run['scenarios'] = [{k: v for k, v in s.items() if k != 'steps'} | {'step_ids': [t['id'] for t in s['steps']], 'png': None, 'ui': None, 'visual_review': 'pending'} for s in self.scenarios]
             # Canonical parity is a global prerequisite: the app grains must equal the reference grains key by key.
             parity = {'sku': compare_grains(reference.sku, app_sku, ['opportunity_no', 'product_code'], REFERENCE_SKU_COLUMNS, source=reference),
                       'opportunity': compare_grains(reference.opportunity, app_opportunity, ['opportunity_no'], REFERENCE_OPPORTUNITY_COLUMNS, source=reference)}
@@ -259,16 +276,18 @@ class AcceptanceRunner:
                 selected = {s['id'] for s in previous['steps'] if s['status'] in ('fail', 'error', 'review', 'blocked')}
                 run['scope'] = 'failed-only from ' + only_failed_from
                 run['notes'].append('Failed-case-only rerun: useful for diagnosis, never a complete pass.')
-            for step in STEPS:
+            for step in self.steps:
                 record = {'id': step['id'], 'title': step['title'], 'conversation': step['conversation'], 'view': step['view'], 'status': 'pending',
                           'prompt': None, 'browser_checks': step['browser_checks'], 'expected': step['behavior'], 'interpretation': None, 'data': None,
                           'returned_plan': None, 'effective_plan': None, 'clarification': None, 'seconds': None, 'error': None, 'warnings': [],
                           'attempts': [], 'recovered': False, 'planner_settings': None, 'fallback_events': []}
+                for key in ('scenario_id', 'category', 'turn_number', 'ui_actions'):
+                    if key in step: record[key] = step[key]
                 reason = blocked_reason(step, witnesses, coverage)
                 if selected is not None and step['id'] not in selected:
                     record['status'], record['error'] = 'not_applicable', 'Not part of this failed-case-only rerun.'
                 elif reason:
-                    record['status'], record['error'] = 'blocked', reason
+                    record['status'], record['error'] = ('not_applicable' if self.live else 'blocked'), reason
                 else:
                     try:
                         record['prompt'] = render_prompt(step, witnesses)
@@ -304,8 +323,15 @@ class AcceptanceRunner:
 
     def status(self, owner, run_id):
         run = self._load(owner, run_id)
+        if self.live:
+            keys = ('id','title','scenario_id','category','turn_number','prompt','status','error','browser_checks','ui_actions','expected','interpretation','recovered')
+            steps = [{k: s.get(k) for k in keys} | {'data_ok': (s.get('data') or {}).get('ok')} for s in run['steps']]
+            snapshot = {k: v for k, v in run['snapshot'].items() if k not in ('parity', 'normalization_warnings')}
+            return {'run': {k: run[k] for k in ('id','status','scenarios','started_at','finished_at')} | {'snapshot': snapshot, 'steps': steps},
+                    'counts': self.counts(run), 'next_step': run['next_step'] if run['status'] == 'running' and run['next_step'] < len(run['steps']) else None,
+                    'total_steps': len(run['steps']), 'complete': self.is_complete(run), 'full_pass': self.is_full_pass(run)}
         return {'run': {k: v for k, v in run.items() if k != 'steps'} | {'steps': [{k: v for k, v in s.items() if k not in ('data',)} | {'data_ok': (s['data'] or {}).get('ok')} for s in run['steps']]},
-                'counts': self.counts(run), 'next_step': run['next_step'] if run['status'] == 'running' else None, 'total_steps': len(run['steps']), 'complete': self.is_complete(run),
+                'counts': self.counts(run), 'next_step': run['next_step'] if run['status'] == 'running' and run['next_step'] < len(run['steps']) else None, 'total_steps': len(run['steps']), 'complete': self.is_complete(run),
                 'full_pass': self.is_full_pass(run), 'qualified': self.is_full_pass(run), 'unqualified_reasons': self.unqualified_reasons(run)}
 
     def detail(self, owner, run_id, step_id):
@@ -330,11 +356,12 @@ class AcceptanceRunner:
     # ----- execution -----
     def step(self, owner, run_id, index):
         run = self._load(owner, run_id)
+        if index < 0 or index >= len(run['steps']): raise AppError('Unknown step index.')
         snapshot = self.snapshots.get(run_id)
         if run['status'] != 'running' or snapshot is None:
             raise AppError(f"This test run is {run['status']}; start a new run.")
         if index < run['next_step']:
-            return {'step': run['steps'][index], 'status': self.status(owner, run_id)}
+            return {'step': run['steps'][index], 'status': self.status(owner, run_id), 'payload': self.payload(owner, run_id, run['steps'][index]['id'])}
         if index != run['next_step']:
             raise AppError('Steps run in order; request the next step.')
         if not snapshot['lock'].acquire(blocking=False):
@@ -352,12 +379,12 @@ class AcceptanceRunner:
             self._finish_if_complete(run, run_id)
             self._save(run)
             # The complete production result of this step stays in memory only, for the browser checks.
-            return {'step': run['steps'][index], 'status': self.status(owner, run_id), 'table': snapshot.get('tables', {}).get(run['steps'][index]['id'])}
+            return {'step': run['steps'][index], 'status': self.status(owner, run_id), 'table': snapshot.get('tables', {}).get(run['steps'][index]['id']), 'payload': self.payload(owner, run_id, run['steps'][index]['id'])}
         finally:
             snapshot['lock'].release()
 
     def _execute(self, owner, run, index, snapshot):
-        step, record = STEPS[index], run['steps'][index]
+        step, record = self.steps[index], run['steps'][index]
         conversation = step['conversation']
         if conversation:
             session = snapshot['sessions'].get(conversation)
@@ -381,6 +408,13 @@ class AcceptanceRunner:
             self._block_followups(run, index, 'An earlier turn of this conversation failed.')
             return
         record['seconds'] = round(monotonic() - started, 3)
+        record['turn_id'] = outcome.get('turn_id')
+        # Keep the public payload exactly as ordinary /api/ask returns it.
+        from query_service import public_answer_payload
+        if self.live:
+            folder = self.artifacts / run['id'] / 'payloads'
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / (record['id'] + '.json')).write_text(json.dumps(jsonable(public_answer_payload(outcome))), encoding='utf-8')
         record['returned_plan'] = outcome.get('returned_plan')
         self._record_diagnostics(run, record, outcome.get('diagnostics') or {})
         ok, problems, variant = match_plan(outcome, step, run['witnesses'])
@@ -395,6 +429,11 @@ class AcceptanceRunner:
                 self._block_followups(run, index, 'An unexpected clarification left the conversation without the expected plan.')
                 return
             verdict, semantic_problems = check_clarification(step, outcome)
+            if step.get('clarification_subject') and verdict == 'pass':
+                # New unsupported calculations require human semantic review,
+                # until an explicit language predicate has been authored.
+                verdict = 'review'
+                semantic_problems.append('Review that the response explains why ' + step['clarification_subject'] + ' is unavailable.')
             record['interpretation']['clarification_check'] = {'verdict': verdict, 'problems': semantic_problems}
             record['interpretation']['problems'] = list(semantic_problems)
             record['interpretation']['ok'] = verdict == 'pass'
@@ -464,11 +503,11 @@ class AcceptanceRunner:
         return summary
 
     def _block_followups(self, run, index, reason):
-        conversation = STEPS[index]['conversation']
+        conversation = self.steps[index]['conversation']
         if not conversation:
             return
-        for later in range(index + 1, len(STEPS)):
-            if STEPS[later]['conversation'] == conversation and run['steps'][later]['status'] == 'pending':
+        for later in range(index + 1, len(self.steps)):
+            if self.steps[later]['conversation'] == conversation and run['steps'][later]['status'] == 'pending':
                 run['steps'][later]['status'], run['steps'][later]['error'] = 'blocked', reason
 
     def record_browser(self, owner, run_id, check_id, status, expected=None, observed=None, notes=None):
@@ -486,10 +525,15 @@ class AcceptanceRunner:
     def is_complete(self, run):
         if run['status'] in ('cancelled', 'interrupted'):
             return False
+        if any(not s.get('png') or s.get('ui') is None for s in run.get('scenarios', [])):
+            return False
         return all(s['status'] != 'pending' for s in run['steps']) and all(b['status'] != 'pending' for b in run['browser'])
 
     def unqualified_reasons(self, run):
         reasons = []
+        for scenario in run.get('scenarios', []):
+            if not scenario.get('png') or not scenario.get('ui') or scenario['ui'].get('status') != 'pass' or scenario.get('visual_review') != 'pass':
+                reasons.append('Scenario evidence or visual review incomplete: ' + scenario['id'])
         if run['snapshot'].get('source')=='postgres' and not run.get('identity',{}).get('source_contract_verified',False):
             reasons.append('live source amount/currency mapping and extraction grain have not been independently verified; confirm them before setting B2B_SOURCE_CONTRACT_VERIFIED=true')
         if not run['snapshot'].get('canonical_parity', False):
@@ -509,6 +553,79 @@ class AcceptanceRunner:
     def is_full_pass(self, run):
         return not self.unqualified_reasons(run)
 
+    def payload(self, owner, run_id, step_id):
+        record = self.detail(owner, run_id, step_id)
+        if record is None: raise AppError('Unknown test step.')
+        path = self.artifacts / run_id / 'payloads' / (record['id'] + '.json')
+        return json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+
+    def test_session(self, owner, run_id, session_id, turn_id):
+        run = self._load(owner, run_id)
+        if not any(s.get('session') == session_id and s.get('turn_id') == turn_id for s in run['steps']):
+            raise AppError('Unknown test answer.')
+        return self.history
+
+    def save_evidence(self, owner, run_id, scenario_id, png):
+        from evidence import validate_png
+        run = self._load(owner, run_id)
+        scenario = next((s for s in run.get('scenarios', []) if s['id'] == scenario_id), None)
+        if scenario is None: raise AppError('Unknown scenario.')
+        if any(s['status'] == 'pending' for s in run['steps'] if s.get('scenario_id') == scenario_id):
+            raise AppError('Scenario has unfinished prompts.')
+        width, height = validate_png(png)
+        folder = self.artifacts / run_id
+        folder.mkdir(parents=True, exist_ok=True)
+        filename = f"{scenario['number']:03d}-{scenario_id}.png"
+        temporary = folder / (filename + '.tmp')
+        temporary.write_bytes(png)
+        temporary.replace(folder / filename)
+        scenario['png'] = {'file': filename, 'bytes': len(png), 'width': width, 'height': height, 'sha256': hashlib.sha256(png).hexdigest()}
+        self._finish_if_complete(run, run_id)
+        self._save_scenarios(run)
+        # The run JSON is durable after every image. Materialize the larger
+        # review bundle at completion, not 200 times during capture.
+        if self.is_complete(run): self.write_review_files(owner, run_id)
+        return self.status(owner, run_id)
+
+    def record_scenario(self, owner, run_id, scenario_id, observation):
+        run = self._load(owner, run_id)
+        scenario = next((s for s in run.get('scenarios', []) if s['id'] == scenario_id), None)
+        if scenario is None: raise AppError('Unknown scenario.')
+        scenario['ui'] = observation
+        self._finish_if_complete(run, run_id)
+        self._save_scenarios(run)
+        return self.status(owner, run_id)
+
+    def _save_scenarios(self, run):
+        folder = self.artifacts / run['id']
+        folder.mkdir(parents=True, exist_ok=True)
+        temp = folder / 'scenarios.tmp'
+        temp.write_text(json.dumps(jsonable(run['scenarios'])), encoding='utf-8')
+        temp.replace(folder / 'scenarios.json')
+        self._cached_runs[run['id']] = run
+        if run['status'] == 'complete': self._save(run)
+
+    def review(self, owner, run_id, start=0, size=10):
+        run = self._load(owner, run_id)
+        scenarios = run.get('scenarios', [])[start:start + size]
+        ids = {s['id'] for s in scenarios}
+        steps = []
+        for s in run['steps']:
+            if s.get('scenario_id') not in ids: continue
+            compact = {k: s.get(k) for k in ('id','scenario_id','turn_number','prompt','status','expected','interpretation','returned_plan','effective_plan','clarification','error','recovered','result')}
+            data = s.get('data') or {}
+            compact['data'] = {k: data.get(k) for k in ('ok','checks','counts','differences')}
+            steps.append(compact)
+        return {'run_id': run_id, 'identity': run['identity'], 'counts': self.counts(run),
+                'scenario_count': len(run.get('scenarios', [])), 'scenarios': scenarios,
+                'steps': steps,
+                'visual_review': 'Pending human review; automated checks do not establish visual correctness.'}
+
+    def write_review_files(self, owner, run_id):
+        folder = self.artifacts / run_id
+        (folder / 'manifest.json').write_text(json.dumps(jsonable(self.review(owner, run_id, 0, 200)), indent=2), encoding='utf-8')
+        (folder / 'report.md').write_text(self.report(owner, run_id), encoding='utf-8')
+
     def _finish_if_complete(self, run, run_id):
         if run['status'] == 'running' and self.is_complete(run):
             run['status'], run['finished_at'] = 'complete', now()
@@ -527,6 +644,9 @@ class AcceptanceRunner:
         latest_identity = None
         for run in runs:
             identity = self.identity_of(run)
+            if identity.get('suite_version') != self.suite_version:
+                reason = 'The latest completed run uses a different suite version; run the current suite.'
+                break
             if run.get('report_version') != REPORT_VERSION or any(identity.get(k) is None for k in IDENTITY_KEYS):
                 reason = 'An earlier run was produced by an older suite, evaluator, or report version and does not count toward this release sequence.'
                 break

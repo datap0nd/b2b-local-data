@@ -1,4 +1,5 @@
-import {useEffect, useState} from 'react';
+import {useContext, useEffect, useState} from 'react';
+import {TestScope} from '@/TestScope';
 import type {SortingState} from '@tanstack/react-table';
 import {Download, Maximize2, RotateCcw} from 'lucide-react';
 import {api} from '@/api';
@@ -12,6 +13,7 @@ import {PREVIEW_ROWS, ResultTable} from './ResultTable';
 
 /** The records behind an aggregate, frozen with its answer. Opening or sorting never reruns a query. */
 export function SupportingRecords({answer, onRerun}: {answer: AnswerPayload; onRerun?: () => void}) {
+  const run = useContext(TestScope);
   const supporting = answer.supporting;
   const [view, setView] = useState<ViewName>(supporting?.default_view ?? 'summary');
   const [open, setOpen] = useState(false);
@@ -35,7 +37,7 @@ export function SupportingRecords({answer, onRerun}: {answer: AnswerPayload; onR
     if (!open || !supporting?.available) return;
     let active = true;
     setLoading(true); setLoadError('');
-    api.supporting(answer.session_id, answer.turn_id, view, page, pageSize, sortField ? {field: sortField, direction: sortDirection} : undefined)
+    api.supporting(answer.session_id, answer.turn_id, view, page, pageSize, sortField ? {field: sortField, direction: sortDirection} : undefined, run)
       .then(result => {
         if (!active) return;
         if (result.available) setLoaded(result.table);
@@ -44,7 +46,7 @@ export function SupportingRecords({answer, onRerun}: {answer: AnswerPayload; onR
       .catch(error => { if (active) { setLoaded(null); setLoadError(error instanceof Error ? error.message : 'Saved records could not be loaded.'); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [open, supporting?.available, answer.session_id, answer.turn_id, view, page, pageSize, sortField, sortDirection]);
+  }, [open, supporting?.available, answer.session_id, answer.turn_id, view, page, pageSize, sortField, sortDirection, run]);
 
   function changeView(next: ViewName) { setView(next); setPage(0); setSorting([]); setLoaded(null); setExportError(''); }
   function rerun() { setOpen(false); onRerun?.(); }
@@ -52,7 +54,7 @@ export function SupportingRecords({answer, onRerun}: {answer: AnswerPayload; onR
     if (exporting || !supporting?.available) return;
     setExporting(true); setExportError('');
     try {
-      const blob = await api.supportingCsv(answer.session_id, answer.turn_id, view, sortField ? {field: sortField, direction: sortDirection} : undefined);
+      const blob = await api.supportingCsv(answer.session_id, answer.turn_id, view, sortField ? {field: sortField, direction: sortDirection} : undefined, run);
       download(`b2b-supporting-${view === 'summary' ? 'opportunities' : 'products'}.csv`, blob);
     } catch (error) { setExportError(error instanceof Error ? error.message : 'The saved records could not be downloaded.'); }
     finally { setExporting(false); }

@@ -28,3 +28,4 @@ dependencies/
 vendor.*/
 .setup.lock
 .config-backups/
+test-results/
