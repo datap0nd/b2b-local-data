@@ -108,7 +108,7 @@ export function Conversation({turns, onView, onPresentation, onExplore, onSugges
   return (
     <div className="relative flex-1 overflow-hidden">
       <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto scroll-thin" data-testid="conversation">
-        <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-6 px-4 py-6 md:px-6">
+        <div className="flex w-full flex-col gap-6 px-4 py-6 md:px-6">
           {empty && (
             <div className="mx-auto mt-[12vh] max-w-[620px] text-center">
               <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-accent">B2B intelligence</p>
