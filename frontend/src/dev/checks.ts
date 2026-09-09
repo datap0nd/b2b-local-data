@@ -17,6 +17,12 @@ function headers(t: HTMLElement) { return qa<HTMLTableCellElement>(t, 'thead th[
 function rows(t: HTMLElement) { return qa<HTMLTableRowElement>(t, 'tbody tr').filter(r => r.cells.length > 1).map(r => Array.from(r.cells).filter(c => !c.querySelector('button[aria-label="Row details"]')).map(c => c.textContent!.trim())); }
 async function allPages(h: Harness, t: HTMLElement): Promise<string[][]> {
   const out: string[][] = [];
+  // A previous check may have left the table on its last page.
+  for (let page = 0; page < 200; page++) {
+    const previous = q<HTMLButtonElement>(t, 'button[aria-label="Previous page"]');
+    if (!previous || previous.disabled) break;
+    previous.click(); await h.frame();
+  }
   for (let page = 0; page < 200; page++) {
     out.push(...rows(t));
     const next = q<HTMLButtonElement>(t, 'button[aria-label="Next page"]');
@@ -28,7 +34,7 @@ async function allPages(h: Harness, t: HTMLElement): Promise<string[][]> {
 async function setPageSize(h: Harness, t: HTMLElement, size: number) { const select = q<HTMLSelectElement>(t, 'select[aria-label="Rows per page"]'); if (!select) return; select.value = String(size); select.dispatchEvent(new Event('change', {bubbles: true})); await h.frame(); }
 async function openMenu(trigger: HTMLElement, h: Harness) { trigger.focus(); trigger.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); await h.frame(); await sleep(30); }
 function menuItems() { return qa<HTMLElement>(document, '[role="menuitemcheckbox"]'); }
-async function closeMenu(h: Harness) { document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); await h.frame(); }
+async function closeMenu(h: Harness) { (document.activeElement ?? document).dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); await h.frame(); }
 function chart(h: Harness) { return q(h.root, '[data-testid="result-chart"]'); }
 function svgOf(h: Harness) { return chart(h)?.querySelector('[role="img"] svg') ?? null; }
 function fills(svg: SVGSVGElement, color: string) { return Array.from(svg.querySelectorAll('path,rect,circle')).filter(el => (el.getAttribute('fill') ?? '').toLowerCase() === color) as SVGGraphicsElement[]; }
@@ -264,8 +270,10 @@ async function resizeCheck(h: Harness): Promise<Observation> {
   const after = svgOf(h) as SVGSVGElement; const widthAfter = after.getBoundingClientRect().width;
   const painted = after.querySelectorAll('path,rect,circle,text').length;
   const finite = Array.from(after.querySelectorAll('path')).every(p => !/NaN|Infinity/.test(p.getAttribute('d') ?? ''));
+  // Compare against the actual chart host, not a guessed linear change in the
+  // surrounding app shell (which has responsive margins and max-width rules).
+  const expectedAfter = chart(h)?.querySelector<HTMLElement>('[role="img"]')?.clientWidth ?? 0;
   h.setWidth(null); window.dispatchEvent(new Event('resize')); await h.frame(); await sleep(150);
-  const expectedAfter = widthBefore - (hostBefore - 620);
   const ok = Math.abs(widthAfter - expectedAfter) < 4 && widthAfter !== widthBefore && painted > 0 && finite && h.errors() === errorsBefore;
   return result(ok, {hostWidth: 620, svgWidth: expectedAfter, painted: '> 0', finite: true, browserErrors: 0}, {hostBefore, widthBefore, widthAfter, painted, finite, browserErrors: h.errors() - errorsBefore}, 'Resized the chart host to 620px through a real resize, waited for the redraw, checked the SVG follows, contains marks, and has finite coordinates.');
 }

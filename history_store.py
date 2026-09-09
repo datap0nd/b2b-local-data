@@ -217,9 +217,11 @@ class HistoryStore:
     # ----- saved answers -----
     @staticmethod
     def bounded(payload):
-        """Bounded copy of a result payload for storage: preview rows only, never raw source extracts."""
+        """Keep row previews and complete aggregate groups; save_result bounds bytes."""
         table=dict(payload)
-        table['rows']=list(table.get('rows') or [])[:PREVIEW_ROWS]
+        rows=list(table.get('rows') or [])
+        table['rows']=rows if table.get('result_kind')=='aggregate' else rows[:PREVIEW_ROWS]
+        if len(table['rows'])<len(rows): table['truncated']=True
         return table
 
     def save_result(self,owner,session,turn_id,kind,plan,fingerprint,freshness,payload):

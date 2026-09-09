@@ -8,7 +8,7 @@ from collections import Counter
 from decimal import Decimal
 from acceptance_suite import STEPS as LEGACY, step, table, metric, chart, F, CLARIFY, SUMMARY_DEFAULT, DETAIL_DEFAULT
 
-VERSION = '5.0.0'
+VERSION = '5.0.1'
 TARGETS = {'continuity': 40, 'filters': 35, 'calculations': 35, 'charts': 35,
            'tables': 25, 'ambiguity': 15, 'presentation': 15}
 SCENARIOS = []
@@ -60,7 +60,7 @@ scopes = [
     ('Lost opportunities', [F('stage', 'group', 'Lost')]),
     ('opportunities owned by {owner_a}', [F('opportunity_owner', 'eq', '{owner_a}')]),
     ("opportunities of type '{type}'", [F('type', 'eq', '{type}')]),
-    ('opportunities closing in 2026', [F('close_date', 'year', 2026)]),
+    ('opportunities with a close date in 2026', [F('close_date', 'year', 2026)]),
     ('whole opportunities containing product {product}', [F('product_code', 'eq', '{product}')]),
 ]
 for name, filters in scopes:
@@ -72,7 +72,9 @@ for name, filters in scopes:
         ('columns', 'Show those with only opportunity number and stage.', table(filters=filters, columns=['stage']), 'Start over: show every opportunity.', table()),
         ('limit', 'Show only the first 5 of those sorted by opportunity number ascending.', table(filters=filters, sort=[('opportunity_no', True)], limit=5), 'Remove the row limit and keep the same population.', table(filters=filters, sort=[('opportunity_no', True)])),
     ]:
-        add('continuity', name + ': ' + label, [initial, turn(follow, expected), turn(last, last_expected)])
+        final = turn(last, last_expected)
+        final['independent'] = label == 'columns'
+        add('continuity', name + ': ' + label, [initial, turn(follow, expected), final])
 
 
 def remaining(category):

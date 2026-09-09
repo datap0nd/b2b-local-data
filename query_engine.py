@@ -365,7 +365,9 @@ def filter_mask(frame,clause):
 
 def serialize(value):
     if value is None or pd.isna(value): return None
-    if isinstance(value,Decimal): return str(value)
+    # SQL NUMERIC zeros can be Decimal('0E-10'). Keep the wire representation
+    # in fixed notation so numeric cells have the same type before/after JSON.
+    if isinstance(value,Decimal): return format(value,'f')
     if isinstance(value,date): return value.isoformat()
     if hasattr(value,'item'): return value.item()
     return value
@@ -390,7 +392,7 @@ def cell_token(value,kind):
         if isinstance(value,bool): return 'b:true' if value else 'b:false'
         return 's:'+str(value)
     if kind=='number' and not isinstance(value,bool):
-        if isinstance(value,(int,float)) or (isinstance(value,str) and NUMERIC_TEXT.fullmatch(value)):
+        if isinstance(value,(int,float)) or (isinstance(value,str) and re.fullmatch(r'[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?',value)):
             number=Decimal(str(value))
             return 'n:'+(format(number.normalize(),'f') if number!=0 else '0')
         return 's:'+str(value)
@@ -561,7 +563,9 @@ class QueryExecutor:
         if order and not result.empty:
             result=result.sort_values([f for f,_ in order],ascending=[ascending for _,ascending in order],na_position='last',kind='stable')
         total=len(result)
-        limit=(plan.limit or 1000) if preview_limit is None else preview_limit
+        # Aggregates must remain complete for charts, measure switches and
+        # headline comparisons. Only row tables have an implicit preview cap.
+        limit=(plan.limit or (total if plan.result_kind==ResultKind.AGGREGATE else 1000)) if preview_limit is None else preview_limit
         complete=result.loc[:,columns].to_dict('records')
         digest=result_digest(complete,columns)
         # Complete-result totals let a viewer compare a preview against everything that matched.
@@ -731,6 +735,9 @@ def local_endpoint(endpoint,allowed_hosts=''):
 
 
 PROMPT_EXAMPLES='''Examples (question -> plan fields):
+- Explicit date fields take precedence over the default closing period. "Close date in 2027" means close_date between 2027-01-01 and 2027-12-31; "close month in 2027" means close_month over that range. Created date and last modified date likewise keep their named field for a day, month, quarter or year. Use default close_month only when no date field is named.
+- When refining a query, omit unchanged fields. Removing a row limit means limit null, without clearing an existing sort. "Opportunities with their product codes" remains opportunity grain; "individual product rows" uses opportunity_sku grain.
+- Grain describes the requested population, not the measure's name: counting opportunity/product pairs for whole opportunities uses opportunity grain with sku_count. Counting only matching product rows uses opportunity_sku grain. Respect an explicit whole-opportunity scope for every measure.
 - "Show every opportunity" -> result_kind rows, presentation table, columns {mode default}.
 - "Show a summary with only the opportunity number, owner, stage, and amount" -> rows, columns {mode only, fields [opportunity_owner, stage, opportunity_amount]} (keys are implicit; nothing else, not the currency).
 - "Show only the rows for product P-100, with their quantity and amount" -> rows at opportunity_sku grain, filter product_code eq P-100, columns {mode default} (quantity and amount are default columns; "with" keeps the defaults).

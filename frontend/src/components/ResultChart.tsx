@@ -40,7 +40,7 @@ export function chartOption(table: TablePayload, measure: string, shownRows: Row
   const base: echarts.EChartsOption = {
     color: COLORS, animationDuration: 200,
     textStyle: {fontFamily: 'Inter, system-ui, sans-serif', color: '#4b5871'},
-    grid: {left: 12, right: 24, top: 35, bottom: 28, containLabel: true},
+    grid: {left: 24, right: 48, top: 52, bottom: 28, containLabel: true},
     tooltip: {trigger: scatter ? 'item' : 'axis', confine: true, borderColor: '#dde2ed', textStyle: {fontSize: 12}},
     aria: {enabled: true, decal: {show: false}},
   };
@@ -48,8 +48,8 @@ export function chartOption(table: TablePayload, measure: string, shownRows: Row
     const [xMeasure, yMeasure] = spec.measures;
     const points = shownRows.filter(row => row[xMeasure] != null && row[yMeasure] != null).map(row => ({value: [numeric(row[xMeasure]), numeric(row[yMeasure])], name: axisLabel(table, dimension, row[dimension]), raw: [row[xMeasure], row[yMeasure]]}));
     return {...base,
-      xAxis: {type: 'value', name: currencyName(table, xMeasure), nameLocation: 'middle', nameGap: 28, splitLine: {lineStyle: {color: '#eef0f5'}}, axisLabel: {formatter: compact}},
-      yAxis: {type: 'value', name: currencyName(table, yMeasure), splitLine: {lineStyle: {color: '#eef0f5'}}, axisLabel: {formatter: compact}},
+      xAxis: {type: 'value', splitNumber: 3, name: currencyName(table, xMeasure), nameLocation: 'middle', nameGap: 28, splitLine: {lineStyle: {color: '#eef0f5'}}, axisLabel: {formatter: compact, hideOverlap: true}},
+      yAxis: {type: 'value', name: currencyName(table, yMeasure), nameTextStyle: {align: 'left'}, splitLine: {lineStyle: {color: '#eef0f5'}}, axisLabel: {formatter: compact, hideOverlap: true}},
       tooltip: {...base.tooltip, formatter: (params: unknown) => { const data = (params as {data: {name: string; raw: Cell[]}}).data; return `<b>${escape(data.name)}</b><br/>${escape(label(xMeasure))}: ${format(xMeasure, data.raw[0])}<br/>${escape(label(yMeasure))}: ${format(yMeasure, data.raw[1])}`; }},
       series: [{type: 'scatter', data: points, symbolSize: 10}]};
   }
@@ -58,13 +58,13 @@ export function chartOption(table: TablePayload, measure: string, shownRows: Row
   if (horizontal) return {...base, tooltip,
     grid: {...base.grid, left: 8, bottom: 24, right: 116},
     yAxis: {type: 'category', data: labels, inverse: true, axisTick: {show: false}, axisLine: {show: false}, axisLabel: {width: 220, overflow: 'truncate', fontSize: 12}},
-    xAxis: {type: 'value', name: currencyName(table, measure), nameLocation: 'middle', nameGap: 28, splitLine: {lineStyle: {color: '#eef0f5'}}, axisLabel: {formatter: compact}},
+    xAxis: {type: 'value', splitNumber: 3, name: currencyName(table, measure), nameLocation: 'middle', nameGap: 28, splitLine: {lineStyle: {color: '#eef0f5'}}, axisLabel: {formatter: compact, hideOverlap: true}},
     series: [{type: 'bar', data: values, barMaxWidth: 24, itemStyle: {borderRadius: [0, 3, 3, 0]}, label: {show: true, position: 'right', fontSize: 12, color: '#4b5871', formatter: (point: {dataIndex: number}) => measureText(table, measure, shownRows[point.dataIndex]?.[measure] ?? null)}}]};
   return {...base, tooltip,
     grid: {...base.grid, bottom: shownRows.length > 12 ? 60 : 28},
     dataZoom: shownRows.length > 12 ? [{type: 'slider', height: 18, bottom: 8, brushSelect: false}] : undefined,
     xAxis: {type: 'category', data: labels, boundaryGap: spec.type === 'bar', axisLabel: {hideOverlap: true}},
-    yAxis: {type: 'value', name: currencyName(table, measure), splitLine: {lineStyle: {color: '#eef0f5'}}, axisLabel: {formatter: compact}},
+    yAxis: {type: 'value', name: currencyName(table, measure), nameLocation: 'end', nameTextStyle: {align: 'left'}, splitLine: {lineStyle: {color: '#eef0f5'}}, axisLabel: {formatter: compact, hideOverlap: true}},
     series: spec.type === 'bar' ? [{type: 'bar', data: values, barMaxWidth: 32}] : [{type: 'line', data: values, connectNulls: false, showSymbol: true, symbolSize: 6, smooth: false, areaStyle: spec.type === 'area' ? {opacity: 0.15} : undefined, lineStyle: {width: 2.5}}]};
 }
 

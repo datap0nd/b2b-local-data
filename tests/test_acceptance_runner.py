@@ -106,6 +106,24 @@ class RunnerTests(unittest.TestCase):
         steps = {s['id']: s for s in runner.status('alice', run_id)['run']['steps']}
         self.assertEqual(steps['T05']['status'], 'error'); self.assertEqual(steps['T06']['status'], 'pass')
         self.assertEqual(steps['C2']['status'], 'error'); self.assertEqual(steps['C3']['status'], 'blocked'); self.assertEqual(steps['C1']['status'], 'pass')
+    def test_data_failure_retains_context_and_explicit_reset_recovers(self):
+        runner, _ = self.runner(fail_on=('E1',))
+        from acceptance_runner import compare as original_compare
+        def faulty_check(expected, table):
+            result=original_compare(expected,table)
+            if table.get('result_kind')=='aggregate':
+                result['ok']=False
+                result['checks']['seeded_arithmetic_error']=False
+            return result
+        with patch('acceptance_runner.compare',side_effect=faulty_check):
+            run_id=self.drive(runner)
+        steps={s['id']:s for s in runner.status('alice',run_id)['run']['steps']}
+        self.assertEqual(steps['B2']['status'],'fail')
+        self.assertNotEqual(steps['B3']['status'],'blocked')
+        self.assertEqual(steps['B6']['status'],'pass')
+        self.assertEqual(steps['E2']['status'],'blocked')
+        self.assertEqual(steps['E4']['status'],'pass')
+        self.assertFalse(runner.status('alice',run_id)['full_pass'])
     def test_steps_are_ordered_idempotent_and_serialized(self):
         runner, planner = self.runner()
         run_id = runner.start('alice')['run']['id']

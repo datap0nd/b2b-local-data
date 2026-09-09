@@ -134,3 +134,23 @@ test('CSV keeps exact decimal values and follows the current table sort', async 
   const rows = csv.split('\r\n').slice(1);
   expect(rows).toEqual(['"003","3","9007199254740992.03"', '"002","2","9007199254740992.02"', '"001","1","9007199254740992.01"']);
 });
+
+test('complete date chart includes the last group beyond 1000 and survives Data switching', async ({page}, info) => {
+  const rows = Array.from({length: 1011}, (_, i) => ({close_date: new Date(Date.UTC(2023, 0, i + 1)).toISOString().slice(0, 10), opportunity_count: i === 1010 ? 85 : 1}));
+  const table = fixtureTable({result_kind: 'aggregate', presentation: 'chart', columns: ['close_date', 'opportunity_count'], column_types: {close_date: 'date', opportunity_count: 'number'}, rows, total_rows: 1011, truncated: false, chart: {type: 'line', dimensions: ['close_date'], measures: ['opportunity_count']}});
+  const payload = fixtureAnswer(table); payload.answer = {title: 'Opportunity count by close date', sentence: '', metrics: []};
+  await mockApp(page, payload);
+  const chart = page.getByTestId('result-chart');
+  await expect(chart).toHaveAttribute('data-shown', '1011');
+  await expect(chart).toContainText('1011 groups.');
+  await page.getByRole('button', {name: 'Data', exact: true}).click();
+  const downloadEvent = page.waitForEvent('download');
+  await page.getByTestId('export').click();
+  const stream = await (await downloadEvent).createReadStream();
+  let csv = ''; for await (const part of stream!) csv += part.toString();
+  expect(csv).toContain(`"${rows[1010].close_date}","85"`);
+  expect(csv.split('\r\n')).toHaveLength(1012);
+  await page.getByRole('button', {name: 'Chart', exact: true}).click();
+  await expect(chart).toHaveAttribute('data-shown', '1011');
+  await page.screenshot({path: info.outputPath('complete-date-chart.png'), fullPage: true});
+});

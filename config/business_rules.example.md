@@ -27,7 +27,7 @@ These rules follow the supplied replication manual and the users' business mappi
 
 ## Dates
 - Raw dates use DD/MM/YYYY with one- or two-digit days and months. Query filters use YYYY-MM-DD. Probability is a fraction: 75% becomes 0.75.
-- A month, quarter, or year (March 2026, Q1 2026, 2026) filters close_month with an inclusive between over the whole period: March 2026 is 2026-03-01 to 2026-03-31, Q1 2026 is 2026-01-01 to 2026-03-31.
+- When no date field is named, a closing month, quarter, or year filters close_month with an inclusive between over the whole period. An explicitly named close_date, close_month, created_date or last_modified_date always takes precedence, including for month, quarter and year ranges.
 - Closing on or before/after a specific day, or "close date", filters close_date. Created and last modified refer to created_date and last_modified_date.
 - A closing month alone does not make an opportunity Open. Open is a stage group; an open, won, or lost opportunity may have a closing month.
 - Relative periods (last month, this quarter, year to date) are resolved from today's date given in the prompt; if the reference point is unclear, ask.

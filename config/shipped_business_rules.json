@@ -16,6 +16,14 @@
     {
       "source_commit": "f7c748226fcfc72730c5e846bab026dbca5d05e4",
       "sha256": "446b0a5849a737437b4c8eaa7949e980b23706e7488293b9f03cda52846b1ea1"
+    },
+    {
+      "source_commit": "9bdcd7415c40",
+      "sha256": "89b742682486e32de23ce579a2b53b4a64351bb63dce148f3aafcd9b81757946"
+    },
+    {
+      "description": "Suite 5.0.1 explicit date-field precedence",
+      "sha256": "9542a752062f7ecb4538cbe016a6e8f63644c112b3aff967a66cfbf924687fb7"
     }
   ]
 }
