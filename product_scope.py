@@ -8,8 +8,15 @@ from query_models import FilterOperator
 def resolve_product_scope(plan, incoming, question, views):
     if plan.result_kind.value == 'clarify':
         return plan
-    # Do not reinterpret an unchanged, previously confirmed product restriction.
-    if not any(f.field == 'pet_name' for f in incoming.filters):
+    # An ordinary follow-up can retain confirmed scope. Mentioning the product
+    # again ("amount just for Q7") needs review even if the planner omitted the
+    # supposedly unchanged contains filter from its refinement.
+    mentions_existing = any(
+        str(value).casefold() in question.casefold()
+        for f in plan.filters if f.field == 'pet_name' and f.value is not None
+        for value in (f.value if isinstance(f.value, list) else [f.value])
+    )
+    if not mentions_existing and not any(f.field == 'pet_name' for f in incoming.filters):
         return plan
     names = sorted({str(v) for v in views.sku.pet_name.dropna()}, key=lambda s: (s.casefold(), s))
 

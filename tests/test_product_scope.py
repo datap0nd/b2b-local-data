@@ -79,6 +79,13 @@ class ProductScopeTests(unittest.TestCase):
         merged=merge_plan(previous,incoming)
         self.assertEqual(resolve_product_scope(merged,incoming,'Now Won',self.views),merged)
 
+    def test_repeated_short_name_rechecks_an_inherited_contains_filter(self):
+        previous=query()
+        incoming=parse_plan({'context_action':'refine','result_kind':'aggregate','measures':['amount']})
+        merged=merge_plan(previous,incoming)
+        result=resolve_product_scope(merged,incoming,'Amount just for Q7',self.views)
+        self.assertEqual(result.result_kind.value,'clarify')
+
     def test_unknown_exact_name_stays_empty_without_inventing_alias(self):
         plan=query('No such model','eq')
         self.assertEqual(self.resolve(plan,'Exactly No such model').filters,plan.filters)
