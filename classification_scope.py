@@ -34,8 +34,16 @@ def resolve_classification_scope(plan, question, config=None):
     # Do not silently erase an explicit exclusion, comparison, or another level.
     # These requests need a confirmed scope rather than an optimistic rewrite.
     ambiguous = (len(matches) != 1 or re.search(
-        r'\b(not|non|except|excluding|exclude|without|remove|drop|clear|versus|vs|or|only current|only previous|'
-        r'latest|older|newest|current|previous|generation|segment|seg_[123]|series)\b|\bs\s*\(n', remaining))
+        r'\b(not|non|except|excluding|exclude|without|remove|drop|clear|compare|versus|vs|or|only current|only previous|'
+        r'latest|older|newest|current|previous|gen|generations?|segment|seg_[123]|series)\b|\bs\s*\(n', remaining))
+    replaced_fields = {d['field'] for d in config['definitions']}
+    # An explicitly named second label cannot disappear during correction.
+    extra_label = any(
+        f.field in replaced_fields and str(v).casefold() not in {d['value'].casefold() for d in matches}
+        and re.search(r'(?<!\w)' + re.escape(str(v).casefold()) + r'(?!\w)', remaining)
+        for f in plan.filters for v in (f.value if isinstance(f.value,list) else [f.value])
+        if v is not None
+    )
     # A matching word inside a named customer/product is not a category request.
     named_entity = any(
         f.field not in {'biz_group','seg_1','seg_2','seg_3','series'} and
@@ -48,7 +56,7 @@ def resolve_classification_scope(plan, question, config=None):
         return parse_plan({'result_kind': 'clarify', 'clarification':
             'Does "flagship" refer to the product classification, or to a named customer or product? '
             'Please specify the intended field and name.'})
-    if ambiguous:
+    if ambiguous or extra_label:
         from query_engine import parse_plan
         return parse_plan({'result_kind': 'clarify', 'clarification':
             'Which classification scope do you want: all flagship products (Segment 1 = FLAGSHIP), '
@@ -57,7 +65,6 @@ def resolve_classification_scope(plan, question, config=None):
 
     definition = matches[0]
     result = plan.model_copy(deep=True)
-    replaced_fields = {d['field'] for d in config['definitions']}
     result.filters = [f for f in result.filters if f.field not in replaced_fields]
     result.filters.append(FilterClause(field=definition['field'], operator='eq', value=definition['value']))
     return result

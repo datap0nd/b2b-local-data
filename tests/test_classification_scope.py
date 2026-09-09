@@ -49,7 +49,7 @@ class ClassificationScopeTests(unittest.TestCase):
     def test_ambiguous_combinations_do_not_execute(self):
         for text in ['not flagship', 'non-flagship', 'remove flagship filter', 'flagship except current generation',
                      'flagship S(N-2)', 'flagship or tablet', 'latest flagship',
-                     'flagship from previous generation', 'flagship segment 3 S(N)',
+                     'flagship from previous generation', 'current gen flagship', 'flagship segment 3 S(N)',
                      'current-generation flagship and previous-generation flagship']:
             with self.subTest(text=text):
                 resolved=resolve_classification_scope(plan(), text)
@@ -65,6 +65,10 @@ class ClassificationScopeTests(unittest.TestCase):
     def test_named_customer_is_not_silently_filtered_as_a_product_category(self):
         original=parse_plan({'filters':[{'field':'end_customer','operator':'eq','value':'Flagship Trading'}]})
         self.assertEqual(resolve_classification_scope(original,'BOs for Flagship Trading').result_kind.value,'clarify')
+
+    def test_explicit_second_segment_label_is_not_silently_discarded(self):
+        original=parse_plan({'filters':[{'field':'seg_1','operator':'in','value':['FLAGSHIP','FEATURE']}]})
+        self.assertEqual(resolve_classification_scope(original,'flagship and FEATURE products').result_kind.value,'clarify')
 
     def test_new_bare_scope_replaces_previous_generation_but_keeps_parent_and_product(self):
         original=plan()
