@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "topic": "B2B",
+  "definitions": [
+    {"term": "current generation flagship", "field": "seg_3", "value": "S(N)"},
+    {"term": "previous generation flagship", "field": "seg_3", "value": "S(N-1)"},
+    {"term": "flagship", "field": "seg_1", "value": "FLAGSHIP"}
+  ]
+}
