@@ -194,6 +194,8 @@ class QueryService:
         diagnostics={'attempts':attempts,'recovered':len(attempts)>1,'settings':outcome.get('settings'),'fallback_events':list(outcome.get('fallback_events') or []),
                      'prompt_digest':outcome.get('prompt_digest'),'effective_date':effective_date.isoformat() if effective_date else None}
         returned=incoming.model_dump(mode='json')
+        from product_scope import resolve_product_scope
+        plan=resolve_product_scope(plan,incoming,question,views)
         if plan.result_kind==ResultKind.CLARIFY:
             suggestions=supported_suggestions(plan.suggestions)
             turn_id=store.append(owner,session_id,question,plan.clarification,model_reply=returned,kind='clarify')
