@@ -35,7 +35,7 @@ export function Composer({onSubmit, busy, compact, draft, onDraftChange, placeho
   }
 
   return (
-    <form className={cn('mx-auto w-full', compact ? 'max-w-[720px]' : 'max-w-[780px]')} onSubmit={e => { e.preventDefault(); void submit(); }}>
+    <form className={cn('mx-auto w-full', compact && 'max-w-[720px]')} onSubmit={e => { e.preventDefault(); void submit(); }}>
       <div className={cn('flex items-end gap-2 rounded-2xl border border-line bg-canvas shadow-card transition-colors focus-within:border-line-2', compact ? 'px-3 py-1.5' : 'px-4 py-2')}>
         <textarea
           ref={ref}
