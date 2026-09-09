@@ -759,6 +759,7 @@ class PlannerClient:
     def __init__(self,settings): self.settings=settings
 
     def system_prompt(self,previous=None,view='auto',effective_date=None):
+        from classification_scope import definition_guidance
         settings=self.settings
         today=(effective_date or date.today()).isoformat()
         return f'''Translate questions into query-plan JSON (contract version 2). Reply with exactly one JSON object and no prose, greeting, or code fence. Today: {today}.
@@ -772,6 +773,7 @@ Default columns: {DEFAULT_COLUMNS[Grain.OPPORTUNITY]} at opportunity grain; {DEF
 Product-level fields (product_code, pet_name, gscm_product_group_new, amount_converted_currency, sku_amount) exist only at opportunity_sku grain.
 Product classifications from the segmented source are also product-level fields: biz_group (business group/top-level product category), seg_1 (segment 1), seg_2 (segment 2), seg_3 (segment 3), series. They are joined by pet_name. The hierarchy runs biz_group -> seg_1 -> seg_2 -> seg_3 -> series -> pet_name/product_code. Existing division is a separate source field; do not substitute biz_focus, division, or gscm_product_group_new for these classifications.
 User-supplied vocabulary examples (not an exhaustive inventory): biz_group SMART, FEATURE, ACCESSORY, TABLET, WEARABLE; seg_1 A SERIES, ACCESSORY, BAND, FEATURE, FLAGSHIP, TABLET; seg_2 ACCESSORY, BAND, ENTRY, FEATURE, HIGH, MID, S, TABL_ENTRY, TAB_MASS; seg_3 A0x, A1x, A2x, A3x, S(N), S(N-1); series A SERIES CASE, A0x, A1x, A3x. Treat stored labels literally, case-insensitive for matching, preserving punctuation. S(N) is current-generation flagship and S(N-1) is previous-generation flagship; never calculate a year or infer a specific SKU from these relative labels.
+{definition_guidance()}
 "Smart products" means biz_group eq SMART; "current-generation flagship" means seg_3 eq S(N); "previous-generation flagship" means seg_3 eq S(N-1). "By segment 1/2/3" groups by seg_1/seg_2/seg_3; "by series" groups by series. A bare "segment" without a prior level is ambiguous: ask which level. Do not invent a hierarchy relationship or assume a listed value exists in the current snapshot.
 For classification breakdowns choose opportunity_sku grain. Distinct opportunity counts by classification can overlap across groups. A filter for whole opportunities containing Smart products uses opportunity grain, biz_group eq SMART and includes all products of those opportunities; a matching-Smart-products quantity/amount uses opportunity_sku grain and only matching products. Follow-up drilldowns replace the grouping level but retain explicit parent filters; generation switches replace the seg_3 restriction. Never repeat whole-opportunity deal_size totals by classification.
 Amount definitions: measure amount is the converted amount (opportunity_amount = the sum of the opportunity's product amounts at opportunity grain; sku_amount per product row at opportunity_sku grain). Amounts are in the currency named by opp_amount_converted_currency (opportunity) or amount_converted_currency (SKU).
