@@ -17,7 +17,7 @@ These rules follow the supplied replication manual and the users' business mappi
 - Won BOs, open BOs, lost BOs, and the bare words won, open, lost refer to those groups. Stage filters using the group names expand to their members. Use stage_group for grouped reporting.
 
 ## Mapping words to columns
-- Product marketing names such as S26, Galaxy S25, or Tab are case-insensitive contains filters on pet_name (Product Marketing Name). A code such as a SKU number is an exact product_code filter.
+- Product marketing names use pet_name (Product Marketing Name). Ask whether an ambiguous short name means the base model or a family, and ask which family members to include; never silently add Plus, Ultra, FE or accessories. Exact models use eq and explicit lists use in with stored names. Only explicit substring searches use contains. A code such as a SKU number is an exact product_code filter.
 - Product categories such as tablet, smart phone, or wearable are case-insensitive contains filters on gscm_product_group_new (Product Group).
 - Subsidiary codes such as SETK, SGE, or SGH are exact filters on subsidiary_subsidiary_code.
 - Customer names such as TDbooks are case-insensitive contains filters on end_customer, unless the user quotes an exact name.

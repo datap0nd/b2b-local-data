@@ -24,6 +24,10 @@
     {
       "description": "Suite 5.0.1 explicit date-field precedence",
       "sha256": "9542a752062f7ecb4538cbe016a6e8f63644c112b3aff967a66cfbf924687fb7"
+    },
+    {
+      "description": "Product-scope clarification policy",
+      "sha256": "34560a0553c149710043d592814b79ae6cbd4a77b2db9ec8bfae6a2129256530"
     }
   ]
 }
